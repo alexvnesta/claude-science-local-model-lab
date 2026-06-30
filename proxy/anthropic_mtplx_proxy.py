@@ -248,11 +248,28 @@ def assistant_message_from_blocks(message: dict[str, Any]) -> dict[str, Any]:
 
 def anthropic_to_openai(payload: dict[str, Any], stream: bool = False) -> dict[str, Any]:
     messages: list[dict[str, Any]] = []
+    payload_tool_names = tool_names(payload)
 
     system = payload.get("system")
     system_text = block_text(system)
     if system_text:
         messages.append({"role": "system", "content": system_text})
+    if CONFIG.tool_mode == "drop" and payload_tool_names and "submit_output" not in payload_tool_names:
+        messages.append(
+            {
+                "role": "system",
+                "content": (
+                    "Local proxy note: Claude Science offered tools for this turn, "
+                    "but this profile intentionally hides tool schemas from the local model. "
+                    "Do not emit tool-call markup, anonymous_function tags, XML tags, or function-call text. "
+                    "Do not claim that you searched, browsed, read files, ran code, created artifacts, "
+                    "or made a figure. If the user asks for live research, files, code execution, "
+                    "or artifacts, say this local profile cannot execute those tools and provide only a "
+                    "short direct draft, plan, or caveated analysis based on the visible prompt. "
+                    "Keep the answer under 220 words so it can finish in one response."
+                ),
+            }
+        )
 
     for message in payload.get("messages") or []:
         if not isinstance(message, dict):
@@ -350,6 +367,10 @@ def parse_json_object_text(text: str) -> dict[str, Any] | None:
             stripped = "\n".join(lines[1:]).strip()
             if stripped.endswith("```"):
                 stripped = stripped[: -len("```")].strip()
+    elif "```" in stripped:
+        match = re.search(r"```(?:json|JSON)?\s*(.*?)```", stripped, flags=re.DOTALL)
+        if match:
+            stripped = match.group(1).strip()
     if not stripped.startswith("{"):
         return None
     try:
@@ -389,6 +410,72 @@ def parse_function_call_text(text: str, tool_name: str) -> dict[str, Any] | None
         except (ValueError, SyntaxError):
             return None
     return arguments if arguments else None
+
+
+def parse_markdown_function_call_text(text: str, tool_name: str) -> dict[str, Any] | None:
+    stripped = text.strip()
+    prefix = f"[{tool_name}]("
+    if not stripped.startswith(prefix) or not stripped.endswith(")"):
+        return None
+    target = stripped[len(prefix) : -1].strip()
+    return parse_function_call_text(target, tool_name)
+
+
+def normalize_tool_arguments(arguments: Any) -> dict[str, Any]:
+    if isinstance(arguments, str):
+        try:
+            parsed = json.loads(arguments)
+        except json.JSONDecodeError:
+            return {"_raw": arguments}
+        return parsed if isinstance(parsed, dict) else {"value": parsed}
+    if isinstance(arguments, dict):
+        return arguments
+    return {"value": arguments}
+
+
+def tool_use_block(name: str, arguments: Any) -> dict[str, Any]:
+    return {
+        "type": "tool_use",
+        "id": f"toolu_{uuid.uuid4().hex}",
+        "name": name,
+        "input": normalize_tool_arguments(arguments),
+    }
+
+
+def parse_json_tool_call_text(
+    text: str,
+    tool_name_hint: str | None = None,
+    allowed_tool_names: list[str] | None = None,
+) -> dict[str, Any] | None:
+    parsed = parse_json_object_text(text)
+    if parsed is None:
+        return None
+
+    allowed_names = set(allowed_tool_names or [])
+
+    def allowed(name: str) -> bool:
+        return not allowed_names or name in allowed_names
+
+    function = parsed.get("function")
+    if isinstance(function, dict):
+        name_value = function.get("name") or parsed.get("name")
+        if isinstance(name_value, str) and allowed(name_value):
+            return tool_use_block(
+                name_value,
+                function.get("arguments", parsed.get("arguments", parsed.get("input", {}))),
+            )
+
+    name_value = parsed.get("name") or parsed.get("tool") or parsed.get("function")
+    if isinstance(name_value, str) and allowed(name_value):
+        return tool_use_block(name_value, parsed.get("arguments", parsed.get("input", {})))
+
+    if tool_name_hint:
+        return tool_use_block(tool_name_hint, parsed)
+
+    if "submit_output" in allowed_names and ("verdict" in parsed or "findings" in parsed):
+        return tool_use_block("submit_output", parsed)
+
+    return None
 
 
 def parse_loose_value(text: str) -> Any:
@@ -435,36 +522,33 @@ def parse_text_tool_call(
     allowed_names = set(allowed_tool_names or [])
 
     if tool_name_hint:
-        arguments = parse_json_object_text(stripped)
-        if arguments is None:
-            arguments = parse_function_call_text(stripped, tool_name_hint)
+        json_tool = parse_json_tool_call_text(
+            stripped,
+            tool_name_hint=tool_name_hint,
+            allowed_tool_names=allowed_tool_names,
+        )
+        if json_tool is not None:
+            return json_tool
+        arguments = parse_function_call_text(stripped, tool_name_hint)
         if arguments is not None:
-            return {
-                "type": "tool_use",
-                "id": f"toolu_{uuid.uuid4().hex}",
-                "name": tool_name_hint,
-                "input": arguments,
-            }
+            return tool_use_block(tool_name_hint, arguments)
+
+    json_tool = parse_json_tool_call_text(stripped, allowed_tool_names=allowed_tool_names)
+    if json_tool is not None:
+        return json_tool
 
     for name in sorted(allowed_names, key=len, reverse=True):
-        arguments = parse_function_call_text(stripped, name)
+        arguments = (
+            parse_function_call_text(stripped, name)
+            or parse_markdown_function_call_text(stripped, name)
+        )
         if arguments is not None:
-            return {
-                "type": "tool_use",
-                "id": f"toolu_{uuid.uuid4().hex}",
-                "name": name,
-                "input": arguments,
-            }
+            return tool_use_block(name, arguments)
 
     xmlish = parse_xmlish_tool_call_text(stripped, allowed_tool_names=allowed_tool_names)
     if xmlish is not None:
         name, arguments = xmlish
-        return {
-            "type": "tool_use",
-            "id": f"toolu_{uuid.uuid4().hex}",
-            "name": name,
-            "input": arguments,
-        }
+        return tool_use_block(name, arguments)
 
     parts = stripped.split("::", 3)
     if len(parts) == 4 and parts[0] == "" and parts[1] and parts[2] in ("+json", "json"):
@@ -473,12 +557,7 @@ def parse_text_tool_call(
         except json.JSONDecodeError:
             arguments = None
         if isinstance(arguments, dict) and (not allowed_names or parts[1] in allowed_names):
-            return {
-                "type": "tool_use",
-                "id": f"toolu_{uuid.uuid4().hex}",
-                "name": parts[1],
-                "input": arguments,
-            }
+            return tool_use_block(parts[1], arguments)
 
     marker = "<tool_call>"
     marker_at = stripped.find(marker)
@@ -510,20 +589,7 @@ def parse_text_tool_call(
         return None
     if allowed_names and name not in allowed_names:
         return None
-    if isinstance(arguments, str):
-        try:
-            arguments = json.loads(arguments)
-        except json.JSONDecodeError:
-            arguments = {"_raw": arguments}
-    if not isinstance(arguments, dict):
-        arguments = {"value": arguments}
-
-    return {
-        "type": "tool_use",
-        "id": f"toolu_{uuid.uuid4().hex}",
-        "name": name,
-        "input": arguments,
-    }
+    return tool_use_block(name, arguments)
 
 
 def openai_to_anthropic(

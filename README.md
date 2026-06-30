@@ -38,7 +38,10 @@ PROXY_PROFILE=profiles/mtplx-qwen.env.example ./scripts/start-proxy-detached.sh
 
 For direct-analysis experiments inside Claude Science, use the Qwen analysis
 profile. It drops Claude Science tool schemas before MTPLX and enables the
-Qwen text-tool-call adapter used by the reviewer loop:
+Qwen text-tool-call adapter used by the reviewer loop. In this mode, Claude
+Science can get direct prose analysis from the local model, but it cannot
+actually browse, run code, read files, or create artifacts through those hidden
+tools:
 
 ```bash
 PROXY_PROFILE=profiles/mtplx-qwen-analysis.env.example ./scripts/start-proxy-detached.sh
@@ -114,6 +117,9 @@ Known limitations:
 - Tool-call translation is enough for direct analysis and observed Qwen reviewer
   pseudo-tool-call formats, but serious agentic scientific workflows still need
   more stress testing.
+- The Qwen analysis profile adds an honesty guard when tool schemas are hidden,
+  so tool-heavy prompts should return a limitation or draft plan rather than
+  fake tool markup such as `<anonymous_function>()`.
 - Claude Science asks for large `max_tokens` values, so local profiles should
   keep a sane cap.
 - MTPLX can serialize concurrent foreground/background generations. The proxy

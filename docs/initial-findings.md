@@ -99,6 +99,10 @@ Additional hardening:
   where the proxy returned `200` but Claude Science kept waiting.
 - `PROXY_STREAM_MODE=direct|buffered` is configurable.
 - `PROXY_TOOL_MODE=pass|drop` is configurable.
+- In `drop` mode, the proxy now injects a hidden-tool guard for non-reviewer
+  tool sets. This prevents the local model from claiming searches, code
+  execution, file reads, or artifact creation when Claude Science offered tools
+  but the profile hid them upstream.
 - `PROXY_PARSE_TEXT_TOOL_CALLS=1` enables Qwen-oriented adapters for observed
   reviewer pseudo-tool-call formats.
 - `./scripts/test-streaming-proxy.sh` covers:
@@ -124,10 +128,31 @@ Live UI evidence:
 - In that fresh verifier, the reviewer produced real Anthropic `tool_use` and
   `tool_result` blocks and the reviewer frame stored `structured_output` with
   `verdict: pass`.
+- A tool-heavy MASLD-HCC figure prompt exposed the failure mode that motivated
+  the hidden-tool guard. Frame `977d476d-becf-41c7-8da1-287d43d721de`
+  completed with a fake `<anonymous_function>()</anonymous_function>` and no
+  real tool activity. The reviewer frame
+  `7a330345-2e6e-40c2-8c30-d7ff07f50a32` correctly identified the claimed
+  action as a failure, but emitted markdown-wrapped function text
+  `[submit_output](submit_output(...))`; Claude Science recorded
+  `inconclusive` with `no structured output`.
+- After adding the hidden-tool guard, frame
+  `e82fb0a0-a309-407a-81bf-6102afeb1a96` returned an honest limitation and
+  draft figure-panel plan without fake tool tags. Its reviewer exposed another
+  adapter shape: fenced reviewer JSON and fenced OpenAI-style function JSON with
+  preamble text.
+- After adding adapters for those JSON shapes, fresh frame
+  `e3d8b42c-e4ab-4428-bfaf-e73d5471a781` completed with
+  `REVIEWER_JSON_ADAPTER_OK`, no fake tool call, and reviewer frame
+  `f10d4677-59da-4101-b340-04879ec18ca1` stored
+  `structured_output: {"findings":[],"verdict":"pass"}` after real
+  `submit_output` `tool_use` / `tool_result` messages.
 
 Remaining caveat:
 
 - The main analysis path is working. Reviewer/tool adaptation is still
   model-specific, but the test suite now covers all Qwen reviewer formats
   observed in this session and the latest fresh-session verifier produced
-  structured reviewer output.
+  structured reviewer output. A clean reviewer pass may be represented only on
+  the reviewer frame's `structured_output`; the `verification_checks` table is
+  mainly useful when a check is opened or inconclusive.

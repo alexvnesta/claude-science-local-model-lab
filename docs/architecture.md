@@ -48,6 +48,9 @@ Useful profile dimensions:
   backends that do not stream reliably.
 - Tool mode: `pass` for tool-capable local models or `drop` for direct-analysis
   runs where Claude Science's tool schemas overwhelm the local model.
+- Hidden-tool guard: when `drop` mode hides non-reviewer tool schemas, the proxy
+  adds a system note telling the local model not to emit fake tool markup or
+  claim searches, code execution, file reads, or artifact creation.
 - Text-tool-call adaptation: Qwen can emit structured intentions as text, so the
   analysis profile can convert narrow patterns back into Anthropic `tool_use`
   blocks. Observed patterns currently covered by tests:
@@ -55,6 +58,10 @@ Useful profile dimensions:
   - `::submit_output::+json::{"verdict":"pass"}`
   - fenced JSON when Claude Science offered exactly one tool
   - `submit_output(verdict="pass", findings=[])`
+  - `[submit_output](submit_output(verdict='fail', findings=[]))`
+  - fenced reviewer JSON with preamble text, when `submit_output` is offered
+  - fenced OpenAI-style function JSON such as
+    `{"type":"function","name":"submit_output","arguments":{...}}`
   - XML-ish Qwen blocks such as
     `<tool_call><function=submit_output><parameter=verdict>pass</parameter>`
 
@@ -67,4 +74,5 @@ so the MTPLX profiles intentionally use buffered mode.
 
 The next reliability project is fresh-session reviewer verification across
 several local models. Qwen's reviewer output is usable but model-specific enough
-that adapters should remain profile-controlled.
+that adapters should remain profile-controlled and regression-tested per model
+family.

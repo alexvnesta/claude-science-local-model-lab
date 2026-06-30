@@ -102,11 +102,19 @@ Expected:
 - The frame eventually reaches `completed` in the isolated SQLite database.
 - For the Qwen analysis profile, `_local/proxy.log` should show Claude Science
   tool schemas dropped before upstream, e.g. `tools=26 upstream_tools=0`.
+- In `PROXY_TOOL_MODE=drop`, tool-heavy prompts should produce an honest
+  limitation or draft plan. They should not contain `<anonymous_function>`,
+  `<tool_call>`, XML function tags, or claims that searches/files/code/artifacts
+  were actually executed.
 - Reviewer status may still be model-specific. If it is inconclusive, inspect
   the reviewer message shape and add a narrow adapter plus a regression test.
+  Observed Qwen reviewer shapes include markdown-wrapped function text, fenced
+  reviewer JSON, fenced OpenAI-style function JSON, XML-ish function blocks,
+  and `::tool::+json::...`.
 - A successful reviewer-adapter pass should show assistant `tool_use`, user
   `tool_result`, and reviewer-frame `structured_output` in the isolated
-  SQLite database.
+  SQLite database. A clean pass may not create a row in `verification_checks`;
+  the reviewer frame's `output_data.structured_output` is the durable evidence.
 
 ## 7. Record Evidence
 

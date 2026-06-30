@@ -74,6 +74,29 @@ class FakeOpenAIHandler(BaseHTTPRequestHandler):
                 },
             )
             return
+        if not payload.get("stream") and "check dropped tool guard" in prompt:
+            guard_present = any(
+                message.get("role") == "system"
+                and "Local proxy note: Claude Science offered tools" in str(message.get("content") or "")
+                for message in messages
+                if isinstance(message, dict)
+            )
+            self._json(
+                200,
+                {
+                    "choices": [
+                        {
+                            "message": {
+                                "role": "assistant",
+                                "content": "guard present" if guard_present else "guard missing",
+                            },
+                            "finish_reason": "stop",
+                        }
+                    ],
+                    "usage": {"prompt_tokens": 4, "completion_tokens": 2},
+                },
+            )
+            return
         if not payload.get("stream") and "fenced json tool call" in prompt:
             self._json(
                 200,
@@ -83,6 +106,76 @@ class FakeOpenAIHandler(BaseHTTPRequestHandler):
                             "message": {
                                 "role": "assistant",
                                 "content": '```json\n{"verdict":"pass","finding_count":0,"findings":[]}\n```',
+                            },
+                            "finish_reason": "stop",
+                        }
+                    ],
+                    "usage": {"prompt_tokens": 4, "completion_tokens": 4},
+                },
+            )
+            return
+        if not payload.get("stream") and "preamble fenced reviewer json tool call" in prompt:
+            self._json(
+                200,
+                {
+                    "choices": [
+                        {
+                            "message": {
+                                "role": "assistant",
+                                "content": (
+                                    "I need to call the submit_output tool.\n\n"
+                                    "```json\n"
+                                    '{"verdict":"pass","findings":[],"note":"ok"}\n'
+                                    "```"
+                                ),
+                            },
+                            "finish_reason": "stop",
+                        }
+                    ],
+                    "usage": {"prompt_tokens": 4, "completion_tokens": 4},
+                },
+            )
+            return
+        if not payload.get("stream") and "openai function json tool call" in prompt:
+            self._json(
+                200,
+                {
+                    "choices": [
+                        {
+                            "message": {
+                                "role": "assistant",
+                                "content": (
+                                    "I need to actually call the submit_output tool.\n\n"
+                                    "```json\n"
+                                    "{\n"
+                                    '  "type": "function",\n'
+                                    '  "name": "submit_output",\n'
+                                    '  "arguments": {"verdict":"pass","findings":[],"note":"ok"}\n'
+                                    "}\n"
+                                    "```"
+                                ),
+                            },
+                            "finish_reason": "stop",
+                        }
+                    ],
+                    "usage": {"prompt_tokens": 4, "completion_tokens": 4},
+                },
+            )
+            return
+        if not payload.get("stream") and "markdown function text tool call" in prompt:
+            self._json(
+                200,
+                {
+                    "choices": [
+                        {
+                            "message": {
+                                "role": "assistant",
+                                "content": (
+                                    "[submit_output](submit_output("
+                                    "verdict='fail', "
+                                    "findings=[{'msg_idx': 2, 'finding_type': 'fail'}]"
+                                    "))"
+                                ),
                             },
                             "finish_reason": "stop",
                         }
@@ -439,7 +532,28 @@ def assert_text_tool_call_adapter(
     block = payload["content"][0]
     assert block["type"] == "tool_use", payload
     assert block["name"] == "submit_output", payload
-    assert block["input"]["verdict"] == "pass", payload
+    expected_verdict = "fail" if prompt == "markdown function text tool call" else "pass"
+    assert block["input"]["verdict"] == expected_verdict, payload
+
+
+def assert_dropped_tool_guard(proxy_port: int) -> None:
+    raw = post_json(
+        f"http://127.0.0.1:{proxy_port}/v1/messages",
+        {
+            "model": "claude-opus-4-8",
+            "max_tokens": 64,
+            "tools": [
+                {
+                    "name": "search_skills",
+                    "description": "search skills",
+                    "input_schema": {"type": "object"},
+                }
+            ],
+            "messages": [{"role": "user", "content": "check dropped tool guard"}],
+        },
+    )
+    payload = json.loads(raw)
+    assert payload["content"][0]["text"] == "guard present", payload
 
 
 def assert_full_json_stream_fallback(proxy_port: int) -> None:
@@ -514,6 +628,8 @@ def main() -> int:
             "claude-opus-4-8,fake-model",
             "--parse-text-tool-calls",
             "1",
+            "--tool-mode",
+            "drop",
         ],
         cwd=ROOT,
         stdout=subprocess.PIPE,
@@ -526,12 +642,28 @@ def main() -> int:
         assert_full_json_stream_fallback(proxy_port)
         assert_stream_connection_closes(proxy_port)
         assert_nonstream(proxy_port)
+        assert_dropped_tool_guard(proxy_port)
         assert_text_tool_call_adapter(proxy_port, "text tool call")
         assert_text_tool_call_adapter(proxy_port, "text json tool call")
         assert_text_tool_call_adapter(proxy_port, "fenced json tool call")
         assert_text_tool_call_adapter(
             proxy_port,
+            "preamble fenced reviewer json tool call",
+            include_extra_tools=True,
+        )
+        assert_text_tool_call_adapter(
+            proxy_port,
+            "openai function json tool call",
+            include_extra_tools=True,
+        )
+        assert_text_tool_call_adapter(
+            proxy_port,
             "function text tool call",
+            include_extra_tools=True,
+        )
+        assert_text_tool_call_adapter(
+            proxy_port,
+            "markdown function text tool call",
             include_extra_tools=True,
         )
         assert_text_tool_call_adapter(
