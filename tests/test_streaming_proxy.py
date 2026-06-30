@@ -108,6 +108,31 @@ class FakeOpenAIHandler(BaseHTTPRequestHandler):
                 },
             )
             return
+        if not payload.get("stream") and "xmlish text tool call" in prompt:
+            self._json(
+                200,
+                {
+                    "choices": [
+                        {
+                            "message": {
+                                "role": "assistant",
+                                "content": (
+                                    "<tool_call>\n"
+                                    "<function=submit_output>\n"
+                                    "<parameter=agent_output_is_complete>\ntrue\n</parameter>\n"
+                                    "<parameter=findings>\n[]\n</parameter>\n"
+                                    "<parameter=verdict>\npass\n</parameter>\n"
+                                    "</function>\n"
+                                    "</tool_call>"
+                                ),
+                            },
+                            "finish_reason": "stop",
+                        }
+                    ],
+                    "usage": {"prompt_tokens": 4, "completion_tokens": 4},
+                },
+            )
+            return
         if not payload.get("stream") and "text tool call" in prompt:
             self._json(
                 200,
@@ -369,23 +394,43 @@ def assert_nonstream(proxy_port: int) -> None:
     assert payload["content"][0]["text"] == "nonstream ok", payload
 
 
-def assert_text_tool_call_adapter(proxy_port: int, prompt: str) -> None:
+def assert_text_tool_call_adapter(
+    proxy_port: int,
+    prompt: str,
+    include_extra_tools: bool = False,
+) -> None:
+    tools = [
+        {
+            "name": "submit_output",
+            "description": "submit review",
+            "input_schema": {
+                "type": "object",
+                "properties": {"verdict": {"type": "string"}},
+                "required": ["verdict"],
+            },
+        }
+    ]
+    if include_extra_tools:
+        tools.extend(
+            [
+                {
+                    "name": "read_file",
+                    "description": "read file",
+                    "input_schema": {"type": "object"},
+                },
+                {
+                    "name": "python",
+                    "description": "run python",
+                    "input_schema": {"type": "object"},
+                },
+            ]
+        )
     raw = post_json(
         f"http://127.0.0.1:{proxy_port}/v1/messages",
         {
             "model": "claude-opus-4-8",
             "max_tokens": 64,
-            "tools": [
-                {
-                    "name": "submit_output",
-                    "description": "submit review",
-                    "input_schema": {
-                        "type": "object",
-                        "properties": {"verdict": {"type": "string"}},
-                        "required": ["verdict"],
-                    },
-                }
-            ],
+            "tools": tools,
             "messages": [{"role": "user", "content": prompt}],
         },
     )
@@ -484,7 +529,16 @@ def main() -> int:
         assert_text_tool_call_adapter(proxy_port, "text tool call")
         assert_text_tool_call_adapter(proxy_port, "text json tool call")
         assert_text_tool_call_adapter(proxy_port, "fenced json tool call")
-        assert_text_tool_call_adapter(proxy_port, "function text tool call")
+        assert_text_tool_call_adapter(
+            proxy_port,
+            "function text tool call",
+            include_extra_tools=True,
+        )
+        assert_text_tool_call_adapter(
+            proxy_port,
+            "xmlish text tool call",
+            include_extra_tools=True,
+        )
     finally:
         proc.terminate()
         try:

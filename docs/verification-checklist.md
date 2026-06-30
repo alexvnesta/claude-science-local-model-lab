@@ -104,6 +104,9 @@ Expected:
   tool schemas dropped before upstream, e.g. `tools=26 upstream_tools=0`.
 - Reviewer status may still be model-specific. If it is inconclusive, inspect
   the reviewer message shape and add a narrow adapter plus a regression test.
+- A successful reviewer-adapter pass should show assistant `tool_use`, user
+  `tool_result`, and reviewer-frame `structured_output` in the isolated
+  SQLite database.
 
 ## 7. Record Evidence
 

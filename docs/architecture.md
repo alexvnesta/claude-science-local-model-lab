@@ -55,6 +55,8 @@ Useful profile dimensions:
   - `::submit_output::+json::{"verdict":"pass"}`
   - fenced JSON when Claude Science offered exactly one tool
   - `submit_output(verdict="pass", findings=[])`
+  - XML-ish Qwen blocks such as
+    `<tool_call><function=submit_output><parameter=verdict>pass</parameter>`
 
 ## Main Technical Debt
 

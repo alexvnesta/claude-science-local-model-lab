@@ -23,6 +23,7 @@ import ast
 import errno
 import json
 import os
+import re
 import sys
 import time
 import traceback
@@ -321,15 +322,24 @@ def anthropic_to_openai(payload: dict[str, Any], stream: bool = False) -> dict[s
     return request
 
 
-def single_tool_name(payload: dict[str, Any]) -> str | None:
+def tool_names(payload: dict[str, Any]) -> list[str]:
     tools = payload.get("tools")
-    if not isinstance(tools, list) or len(tools) != 1:
+    if not isinstance(tools, list):
+        return []
+    names: list[str] = []
+    for tool in tools:
+        if not isinstance(tool, dict):
+            continue
+        name = tool.get("name")
+        if isinstance(name, str) and name:
+            names.append(name)
+    return names
+
+
+def single_tool_name(names: list[str]) -> str | None:
+    if len(names) != 1:
         return None
-    tool = tools[0]
-    if not isinstance(tool, dict):
-        return None
-    name = tool.get("name")
-    return name if isinstance(name, str) and name else None
+    return names[0]
 
 
 def parse_json_object_text(text: str) -> dict[str, Any] | None:
@@ -381,10 +391,48 @@ def parse_function_call_text(text: str, tool_name: str) -> dict[str, Any] | None
     return arguments if arguments else None
 
 
-def parse_text_tool_call(content: Any, tool_name_hint: str | None = None) -> dict[str, Any] | None:
+def parse_loose_value(text: str) -> Any:
+    value = text.strip()
+    try:
+        return json.loads(value)
+    except json.JSONDecodeError:
+        return value
+
+
+def parse_xmlish_tool_call_text(
+    text: str,
+    allowed_tool_names: list[str] | None = None,
+) -> tuple[str, dict[str, Any]] | None:
+    stripped = text.strip()
+    if not stripped.startswith("<tool_call>"):
+        return None
+    match = re.search(r"<function=([A-Za-z_][A-Za-z0-9_.-]*)>", stripped)
+    if not match:
+        return None
+    name = match.group(1)
+    allowed_names = set(allowed_tool_names or [])
+    if allowed_names and name not in allowed_names:
+        return None
+
+    arguments: dict[str, Any] = {}
+    for parameter, raw_value in re.findall(
+        r"<parameter=([A-Za-z_][A-Za-z0-9_.-]*)>(.*?)</parameter>",
+        stripped,
+        flags=re.DOTALL,
+    ):
+        arguments[parameter] = parse_loose_value(raw_value)
+    return (name, arguments) if arguments else None
+
+
+def parse_text_tool_call(
+    content: Any,
+    tool_name_hint: str | None = None,
+    allowed_tool_names: list[str] | None = None,
+) -> dict[str, Any] | None:
     if not CONFIG.parse_text_tool_calls or not isinstance(content, str):
         return None
     stripped = content.strip()
+    allowed_names = set(allowed_tool_names or [])
 
     if tool_name_hint:
         arguments = parse_json_object_text(stripped)
@@ -398,13 +446,33 @@ def parse_text_tool_call(content: Any, tool_name_hint: str | None = None) -> dic
                 "input": arguments,
             }
 
+    for name in sorted(allowed_names, key=len, reverse=True):
+        arguments = parse_function_call_text(stripped, name)
+        if arguments is not None:
+            return {
+                "type": "tool_use",
+                "id": f"toolu_{uuid.uuid4().hex}",
+                "name": name,
+                "input": arguments,
+            }
+
+    xmlish = parse_xmlish_tool_call_text(stripped, allowed_tool_names=allowed_tool_names)
+    if xmlish is not None:
+        name, arguments = xmlish
+        return {
+            "type": "tool_use",
+            "id": f"toolu_{uuid.uuid4().hex}",
+            "name": name,
+            "input": arguments,
+        }
+
     parts = stripped.split("::", 3)
     if len(parts) == 4 and parts[0] == "" and parts[1] and parts[2] in ("+json", "json"):
         try:
             arguments = json.loads(parts[3].strip())
         except json.JSONDecodeError:
             arguments = None
-        if isinstance(arguments, dict):
+        if isinstance(arguments, dict) and (not allowed_names or parts[1] in allowed_names):
             return {
                 "type": "tool_use",
                 "id": f"toolu_{uuid.uuid4().hex}",
@@ -440,6 +508,8 @@ def parse_text_tool_call(content: Any, tool_name_hint: str | None = None) -> dic
 
     if not name:
         return None
+    if allowed_names and name not in allowed_names:
+        return None
     if isinstance(arguments, str):
         try:
             arguments = json.loads(arguments)
@@ -459,7 +529,7 @@ def parse_text_tool_call(content: Any, tool_name_hint: str | None = None) -> dic
 def openai_to_anthropic(
     data: dict[str, Any],
     requested_model: str | None = None,
-    text_tool_name_hint: str | None = None,
+    text_tool_names: list[str] | None = None,
 ) -> dict[str, Any]:
     choices = data.get("choices") or []
     choice = choices[0] if choices else {}
@@ -467,7 +537,12 @@ def openai_to_anthropic(
     content_blocks: list[dict[str, Any]] = []
 
     content = message.get("content")
-    parsed_text_tool = parse_text_tool_call(content, tool_name_hint=text_tool_name_hint)
+    text_tool_name_hint = single_tool_name(text_tool_names or [])
+    parsed_text_tool = parse_text_tool_call(
+        content,
+        tool_name_hint=text_tool_name_hint,
+        allowed_tool_names=text_tool_names,
+    )
     if parsed_text_tool:
         content_blocks.append(parsed_text_tool)
     elif content:
@@ -716,7 +791,7 @@ def stream_openai_to_anthropic(
     handler: BaseHTTPRequestHandler,
     request: dict[str, Any],
     requested_model: str,
-    text_tool_name_hint: str | None = None,
+    text_tool_names: list[str] | None = None,
 ) -> None:
     started = time.monotonic()
     response = open_openai_stream(request)
@@ -856,7 +931,7 @@ def stream_openai_to_anthropic(
                 message = openai_to_anthropic(
                     chunk,
                     requested_model=requested_model,
-                    text_tool_name_hint=text_tool_name_hint,
+                    text_tool_names=text_tool_names,
                 )
                 if message_started or saw_any_content:
                     log("ignoring full-message stream fallback after partial stream output")
@@ -1020,7 +1095,7 @@ class Handler(BaseHTTPRequestHandler):
             requested_model = str(payload.get("model") or CONFIG.upstream_model)
             stream_requested = bool(payload.get("stream"))
             request = anthropic_to_openai(payload, stream=stream_requested)
-            text_tool_name_hint = single_tool_name(payload)
+            text_tool_names = tool_names(payload)
             requested_max_tokens = payload.get("max_tokens")
             log(
                 "request "
@@ -1036,14 +1111,14 @@ class Handler(BaseHTTPRequestHandler):
                     self,
                     request,
                     requested_model=requested_model,
-                    text_tool_name_hint=text_tool_name_hint,
+                    text_tool_names=text_tool_names,
                 )
             else:
                 upstream = call_openai_chat(request)
                 message = openai_to_anthropic(
                     upstream,
                     requested_model=requested_model,
-                    text_tool_name_hint=text_tool_name_hint,
+                    text_tool_names=text_tool_names,
                 )
                 if stream_requested:
                     stream_anthropic(self, message)

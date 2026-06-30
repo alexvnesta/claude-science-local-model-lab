@@ -119,10 +119,15 @@ Live UI evidence:
   stromal/sampling contamination.
 - A final tiny UI prompt completed with:
   `Local proxy analysis path works, but review/tool adaptation remains model-specific.`
+- A fresh-session verifier completed with:
+  `FRESH_XML_ADAPTER_OK. Local-model reviewer tool calls need provider-specific adapters and regression fixtures.`
+- In that fresh verifier, the reviewer produced real Anthropic `tool_use` and
+  `tool_result` blocks and the reviewer frame stored `structured_output` with
+  `verdict: pass`.
 
 Remaining caveat:
 
 - The main analysis path is working. Reviewer/tool adaptation is still
-  model-specific. The test suite now covers all Qwen reviewer formats observed
-  in this session, but a fresh-session UI pass after the latest adapter is still
-  the next clean verification.
+  model-specific, but the test suite now covers all Qwen reviewer formats
+  observed in this session and the latest fresh-session verifier produced
+  structured reviewer output.
