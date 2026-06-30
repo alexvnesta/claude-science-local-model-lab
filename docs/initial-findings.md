@@ -80,12 +80,49 @@ Known rough edges:
   likely model metadata / UI state rather than a routing failure.
 - Claude Science requests very large `max_tokens` values. The proxy now caps
   upstream `max_tokens` with `PROXY_MAX_TOKENS_CAP` to keep local runs sane.
-- The proxy currently fakes Anthropic streaming by waiting for a full OpenAI
-  response, then emitting Anthropic SSE events. Real streamed tool-call deltas
-  are the next reliability project.
+- The proxy supports true stream bridging in tests, including text deltas and
+  tool-call argument deltas. MTPLX/Qwen direct streaming hung after
+  `message_start` in live testing, so MTPLX profiles use buffered mode.
 - MTPLX latency is workable for tiny prompts but too slow for full scientific
   loops without careful model/profile tuning.
 - MTPLX can return `session_busy` when Claude Science sends background-review
   calls while another local generation is active. The proxy retries transient
   upstream load responses, but persistent saturation still needs operator
   attention.
+
+## 2026-06-30 Proxy Refinement Result
+
+Additional hardening:
+
+- Buffered Anthropic SSE responses now send `Connection: close` and close after
+  `message_stop`. This removed the observed app-side idle-watchdog mismatch
+  where the proxy returned `200` but Claude Science kept waiting.
+- `PROXY_STREAM_MODE=direct|buffered` is configurable.
+- `PROXY_TOOL_MODE=pass|drop` is configurable.
+- `PROXY_PARSE_TEXT_TOOL_CALLS=1` enables Qwen-oriented adapters for observed
+  reviewer pseudo-tool-call formats.
+- `./scripts/test-streaming-proxy.sh` covers:
+  - streamed text deltas;
+  - streamed tool-call argument deltas;
+  - full JSON response fallback on a streamed request;
+  - socket close after `message_stop`;
+  - non-streaming responses;
+  - observed Qwen text-tool-call formats.
+
+Live UI evidence:
+
+- With `profiles/mtplx-qwen-analysis.env.example`, Claude Science sent a
+  MASLD-HCC analysis request with `tools=26` and `upstream_tools=0`; the proxy
+  routed it to MTPLX and Claude Science rendered a real analysis in the UI.
+- The persisted frame `60449c6c-b5db-4f9b-970b-656a23abf2ee` completed with a
+  bounded MASLD-HCC response on tumor-intrinsic dedifferentiation vs
+  stromal/sampling contamination.
+- A final tiny UI prompt completed with:
+  `Local proxy analysis path works, but review/tool adaptation remains model-specific.`
+
+Remaining caveat:
+
+- The main analysis path is working. Reviewer/tool adaptation is still
+  model-specific. The test suite now covers all Qwen reviewer formats observed
+  in this session, but a fresh-session UI pass after the latest adapter is still
+  the next clean verification.

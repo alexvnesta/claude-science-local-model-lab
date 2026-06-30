@@ -44,10 +44,25 @@ Useful profile dimensions:
 - Advertised Claude alias, usually `claude-opus-4-8`, plus the real local model.
 - Request timeout.
 - `max_tokens` cap.
-- Future: provider-specific thinking/tool-call/JSON-mode hints.
+- Stream mode: `direct` for true upstream SSE bridging or `buffered` for local
+  backends that do not stream reliably.
+- Tool mode: `pass` for tool-capable local models or `drop` for direct-analysis
+  runs where Claude Science's tool schemas overwhelm the local model.
+- Text-tool-call adaptation: Qwen can emit structured intentions as text, so the
+  analysis profile can convert narrow patterns back into Anthropic `tool_use`
+  blocks. Observed patterns currently covered by tests:
+  - `<tool_call>["submit_output", "{\"verdict\":\"pass\"}"]`
+  - `::submit_output::+json::{"verdict":"pass"}`
+  - fenced JSON when Claude Science offered exactly one tool
+  - `submit_output(verdict="pass", findings=[])`
 
 ## Main Technical Debt
 
-The current proxy buffers streaming requests. Claude Science can consume the
-synthetic Anthropic SSE response, but true incremental tool-call streaming will
-be needed for reliability and speed on longer workflows.
+The proxy can bridge true streaming, and the test suite covers streamed text,
+streamed tool-call argument deltas, full-JSON fallback, and finite connection
+close after `message_stop`. MTPLX/Qwen direct streaming hung during live testing,
+so the MTPLX profiles intentionally use buffered mode.
+
+The next reliability project is fresh-session reviewer verification across
+several local models. Qwen's reviewer output is usable but model-specific enough
+that adapters should remain profile-controlled.

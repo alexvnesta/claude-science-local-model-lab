@@ -39,13 +39,20 @@ expose OpenAI-compatible chat completions. The proxy does the translation:
 - Onboarding task generation called `POST /v1/messages` through the proxy.
 - A live UI prompt asking for exactly `LOCAL MODEL OK` was answered by the local
   model and rendered in Claude Science.
+- Bounded biomedical-analysis prompts completed in the UI through the local
+  MTPLX/Qwen path.
+- The proxy test suite covers Anthropic SSE output, OpenAI streaming text,
+  OpenAI streaming tool-call deltas, full-JSON fallback, socket close after
+  `message_stop`, and observed Qwen text-tool-call formats.
 
 ## What Is Rough
 
-- Streaming is buffered. The proxy waits for the local backend to finish, then
-  emits Anthropic SSE events.
-- Tool calls need more stress testing. The basic format translation exists, but
-  full scientific-agent workflows will expose more edge cases.
+- Streaming is configurable. The proxy can bridge true OpenAI SSE into
+  Anthropic SSE, but MTPLX/Qwen direct streaming hung during live testing, so the
+  MTPLX profiles currently use buffered mode.
+- Tool calls need more stress testing. Basic format translation exists, and the
+  Qwen analysis profile has adapters for observed reviewer pseudo-tool-call
+  formats, but full scientific-agent workflows will expose more edge cases.
 - Local model latency matters. Tiny prompts worked; longer Claude Science loops
   need careful model and token-cap tuning.
 - Local backends may serialize concurrent requests. MTPLX can return
@@ -69,6 +76,9 @@ MTPLX_OPENAI_BASE_URL=http://127.0.0.1:11434/v1
 MTPLX_OPENAI_MODEL=gemma-or-qwen-or-your-model
 PROXY_ADVERTISED_MODELS=claude-opus-4-8,gemma-or-qwen-or-your-model
 PROXY_MAX_TOKENS_CAP=4096
+PROXY_STREAM_MODE=direct
+PROXY_TOOL_MODE=pass
+PROXY_PARSE_TEXT_TOOL_CALLS=0
 ```
 
 Then run:
@@ -76,6 +86,7 @@ Then run:
 ```bash
 PROXY_PROFILE=profiles/local.env ./scripts/start-proxy-detached.sh
 ./scripts/smoke-proxy.sh
+./scripts/test-streaming-proxy.sh
 ./scripts/launch-claude-science-local.sh
 ```
 

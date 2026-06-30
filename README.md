@@ -36,10 +36,19 @@ Start the proxy in the background with the MTPLX/Qwen profile:
 PROXY_PROFILE=profiles/mtplx-qwen.env.example ./scripts/start-proxy-detached.sh
 ```
 
+For direct-analysis experiments inside Claude Science, use the Qwen analysis
+profile. It drops Claude Science tool schemas before MTPLX and enables the
+Qwen text-tool-call adapter used by the reviewer loop:
+
+```bash
+PROXY_PROFILE=profiles/mtplx-qwen-analysis.env.example ./scripts/start-proxy-detached.sh
+```
+
 Smoke test the proxy:
 
 ```bash
 ./scripts/smoke-proxy.sh
+./scripts/test-streaming-proxy.sh
 ```
 
 Launch the isolated Claude Science copy:
@@ -76,6 +85,13 @@ settings are:
   `max_tokens` requests.
 - `PROXY_UPSTREAM_RETRIES` and `PROXY_UPSTREAM_RETRY_DELAY`: retries for
   transient local-backend load, including MTPLX `session_busy` responses.
+- `PROXY_STREAM_MODE`: `direct` bridges upstream OpenAI SSE into Anthropic SSE;
+  `buffered` waits for the full upstream response, then emits a finite
+  Anthropic SSE response.
+- `PROXY_TOOL_MODE`: `pass` forwards tool schemas, `drop` removes them before
+  the local model.
+- `PROXY_PARSE_TEXT_TOOL_CALLS`: converts narrow Qwen-style textual tool-call
+  forms back into Anthropic `tool_use` blocks.
 
 The MTPLX proof profile is in `profiles/mtplx-qwen.env.example`. A generic
 profile for Ollama/Gemma/vLLM/LM Studio is in
@@ -83,21 +99,28 @@ profile for Ollama/Gemma/vLLM/LM Studio is in
 
 ## Current Status
 
-The gateway path works: the isolated Claude Science copy made real
+The gateway path works. The isolated Claude Science copy made real
 `/v1/messages` calls to the local proxy, the proxy routed them to MTPLX, and
-Claude Science rendered `LOCAL MODEL OK` in the UI.
+Claude Science rendered local model outputs in the UI, including deterministic
+gateway tests and bounded MASLD-HCC analysis prompts.
 
 Known limitations:
 
-- Streaming is currently buffered: the proxy waits for a full upstream response,
-  then emits Anthropic SSE events.
-- Tool-call translation is sufficient for the first proof, but needs more stress
-  testing before serious agentic scientific workflows.
+- The proxy supports direct OpenAI-SSE-to-Anthropic-SSE bridging, but the MTPLX
+  Qwen endpoint hung in direct streaming during testing. The MTPLX profiles
+  therefore use `PROXY_STREAM_MODE=buffered`.
+- Buffered SSE responses now close the connection after `message_stop`; this
+  fixed app-side idle-watchdog symptoms seen during early UI runs.
+- Tool-call translation is enough for direct analysis and observed Qwen reviewer
+  pseudo-tool-call formats, but serious agentic scientific workflows still need
+  more stress testing.
 - Claude Science asks for large `max_tokens` values, so local profiles should
   keep a sane cap.
 - MTPLX can serialize concurrent foreground/background generations. The proxy
   retries transient `session_busy` responses, but serious runs should still keep
   background-review traffic in mind.
+- Long follow-up chains grow expensive quickly. Prefer fresh sessions for clean
+  verification and benchmark runs.
 - Some UI metadata can still say the Claude alias is unavailable even while
   request routing is local.
 

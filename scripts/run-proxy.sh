@@ -14,6 +14,9 @@ export PROXY_REQUEST_TIMEOUT="${PROXY_REQUEST_TIMEOUT:-240}"
 export PROXY_MAX_TOKENS_CAP="${PROXY_MAX_TOKENS_CAP:-4096}"
 export PROXY_UPSTREAM_RETRIES="${PROXY_UPSTREAM_RETRIES:-2}"
 export PROXY_UPSTREAM_RETRY_DELAY="${PROXY_UPSTREAM_RETRY_DELAY:-2}"
+export PROXY_STREAM_MODE="${PROXY_STREAM_MODE:-direct}"
+export PROXY_TOOL_MODE="${PROXY_TOOL_MODE:-pass}"
+export PROXY_PARSE_TEXT_TOOL_CALLS="${PROXY_PARSE_TEXT_TOOL_CALLS:-0}"
 export PROXY_ADVERTISED_MODELS="${PROXY_ADVERTISED_MODELS:-claude-opus-4-8,$MTPLX_OPENAI_MODEL}"
 
 exec python3 "$ROOT/proxy/anthropic_mtplx_proxy.py" \
@@ -25,4 +28,7 @@ exec python3 "$ROOT/proxy/anthropic_mtplx_proxy.py" \
   --max-tokens-cap "$PROXY_MAX_TOKENS_CAP" \
   --upstream-retries "$PROXY_UPSTREAM_RETRIES" \
   --upstream-retry-delay "$PROXY_UPSTREAM_RETRY_DELAY" \
+  --stream-mode "$PROXY_STREAM_MODE" \
+  --tool-mode "$PROXY_TOOL_MODE" \
+  --parse-text-tool-calls "$PROXY_PARSE_TEXT_TOOL_CALLS" \
   --advertised-models "$PROXY_ADVERTISED_MODELS"
