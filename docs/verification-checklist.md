@@ -88,10 +88,11 @@ Expected:
 - `/v1/messages/count_tokens` returns an `input_tokens` value.
 - `/v1/messages` returns a message containing `mtplx proxy ok`.
 - `./scripts/test-streaming-proxy.sh` passes streamed text, direct-stream
-  heartbeat comments, request ID response headers, buffered validation of
-  upstream streamed tool-call deltas, invalid tool-call filtering, full-JSON
-  fallback, finite SSE close, redacted health metrics, and Qwen text-tool-call
-  adapter cases.
+  long-output chunking, heartbeat comments, request ID response headers,
+  streamed tool-call argument assembly, malformed streamed tool-call filtering,
+  direct-stream reviewer/harness allowlists, full-JSON fallback, in-band stream
+  error events, finite SSE close, client cancellation survival, redacted health
+  metrics, and Qwen text-tool-call adapter cases.
 
 ## 4. Launch Isolated Claude Science
 
@@ -201,6 +202,69 @@ OpenRouter-free note from 2026-07-01: provider-only smoke passed, but full
 Claude Science UI prompts to two `:free` models hit upstream 429 capacity
 responses. Treat that as a provider-capacity caveat, not as a proxy routing
 failure. See `docs/demo-capture.md`.
+
+## 5A. Direct-Stream App Hardening Proof
+
+Use this only after the proxy-level tests pass. Do not use the official Claude
+Science app on `127.0.0.1:8765`; direct-mode app proof must use the copied app
+under `_local/` on `127.0.0.1:18765`.
+
+Create an ignored direct profile from the closest real backend profile:
+
+```bash
+cp profiles/mtplx-qwen-execution-probe.env.example _local/mtplx-qwen-direct.env
+# edit _local/mtplx-qwen-direct.env:
+#   PROXY_STREAM_MODE=direct
+#   PROXY_STREAM_HEARTBEAT_SECONDS=15
+```
+
+Then verify the backend and proxy:
+
+```bash
+./scripts/status.sh
+curl --fail --show-error --silent http://127.0.0.1:8030/v1/models
+./scripts/stop-proxy.sh
+PROXY_PROFILE=_local/mtplx-qwen-direct.env ./scripts/start-proxy-detached.sh
+PROXY_PROFILE=_local/mtplx-qwen-direct.env ./scripts/doctor.sh
+./scripts/smoke-proxy.sh
+./scripts/test-streaming-proxy.sh
+```
+
+Launch only the isolated app:
+
+```bash
+ANTHROPIC_BASE_URL=http://127.0.0.1:18080 ./scripts/launch-claude-science-local.sh
+./scripts/local-url.sh
+```
+
+Try, in fresh sessions when practical:
+
+- Long no-tool response: ask for a numbered 40-line direct answer with no
+  tools. Expected: the UI streams visibly, does not freeze, and `/healthz`
+  counts the request under `stream_mode=direct`.
+- Constrained tool loop: use the execution profile and explicitly ask for one
+  `python` call followed by `save_artifacts` for a tiny generated text file or
+  plot. Expected: Claude Science persists `tool_use`, `tool_result`,
+  artifact/version state, and a final answer.
+- Reviewer/harness pass: expected proxy logs and `/healthz` classify reviewer
+  traffic as `kind=harness`, with reviewer inspection tools from
+  `PROXY_HARNESS_TOOL_ALLOWLIST` rather than the foreground allowlist.
+- Cancellation: interrupt or close a long direct-stream UI turn. Expected: the
+  proxy logs a client disconnect, remains healthy, and `/healthz` still
+  responds without exposing prompt or tool data.
+
+If live proof is blocked, record only public-safe state: output from
+`./scripts/status.sh`, the upstream `/v1/models` reachability result, the active
+profile's redacted `/healthz`, and whether the isolated app was listening or
+authenticated. Do not publish prompts, tool arguments, tool results, cookies,
+SQLite rows, artifacts, or diagnostic ZIPs.
+
+Direct-mode app-side attempt from 2026-07-01: proxy-level fake-upstream tests
+passed, but live Claude Science app proof was not run because MTPLX
+`127.0.0.1:8030` was not reachable, the isolated app was not listening on
+`127.0.0.1:18765`, and the existing lab proxy on `127.0.0.1:18080` was running
+the buffered execution profile. The official app remained separate on
+`127.0.0.1:8765`.
 
 ## 6. Bounded Analysis Proof
 

@@ -5,10 +5,13 @@
 This proxy is in a good state for a public research lab. It proves that an
 isolated Claude Science app copy can route Anthropic-style model calls through
 a local proxy into an OpenAI-compatible backend, and it has real tests around
-the fragile parts: streaming conversion, direct-stream idle heartbeats, finite
-SSE close, request ID response headers, tool-call filtering, schema validation,
-Qwen-style reviewer tool-call text, reviewer-specific tool allowlists, Python
-smuggling guards, harness closeout forcing, and redacted health metrics.
+the fragile parts: streaming conversion, long direct text streams,
+direct-stream idle heartbeats, streamed tool-call argument assembly, malformed
+streamed tool-call filtering, in-band stream error events, finite SSE close,
+client disconnect survival, request ID response headers, tool-call filtering,
+schema validation, Qwen-style reviewer tool-call text, reviewer-specific tool
+allowlists, Python smuggling guards, harness closeout forcing, and redacted
+health metrics.
 
 It is not yet a polished production gateway. The main risks are long-running
 streaming behavior, the size of the single proxy file, model-specific adapters
@@ -23,13 +26,20 @@ tool turns, and needs reviewer-loop guardrails.
 
 1. Harden direct streaming for live Claude Science app loops.
 
-   The test suite now covers direct OpenAI SSE to Anthropic SSE conversion,
-   idle heartbeat comments, request-ID headers, finite close, and buffered
-   validation of upstream streamed tool-call argument deltas. The known-good
-   MTPLX/Qwen app path is still buffered for short loops. Direct mode still
-   needs app-side proof for long generations, safe app-visible incremental tool
-   arguments, cancellation under real browser/app disconnects, and
-   reviewer/harness traffic.
+   Proxy-level hardening now covers direct OpenAI SSE to Anthropic SSE
+   conversion, long multi-chunk text, idle heartbeat comments, split streamed
+   tool-call arguments, malformed or incomplete streamed tool arguments,
+   schema-valid tool emission, reviewer/harness direct-stream allowlists,
+   request-ID headers, finite close, in-band upstream stream errors, and a
+   socket-level client cancellation regression. Tool arguments are still
+   accumulated and emitted only after final schema validation; the app never
+   sees unvalidated incremental argument fragments.
+
+   The known-good MTPLX/Qwen app path is still buffered for short loops. Direct
+   mode still needs app-side proof for long Claude Science generations,
+   foreground Python plus artifact save loops, reviewer/harness completion, and
+   cancellation under a real browser/app disconnect before it should become the
+   default Qwen execution profile.
 
 2. Split the proxy into modules.
 
