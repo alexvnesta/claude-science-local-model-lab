@@ -135,7 +135,9 @@ analysis prompts, focused tool loops, reviewer `submit_output`, `python` plus
 runs, reviewer inspection-tool routing, and local/provider model-picker labels.
 
 Primary Qwen/MTPLX workflow GIF:
-[`docs/assets/qwen-mtplx-tp53-workflow-demo.gif`](docs/assets/qwen-mtplx-tp53-workflow-demo.gif).
+
+![Claude Science running a TP53 TCGA-BRCA analysis through local MTPLX Qwen 27B](docs/assets/qwen-mtplx-tp53-workflow-demo.gif)
+
 It shows the isolated app using the `MTPLX Qwen 27B Local` model label,
 conversation-scoped Python permission, a reviewer finding, Qwen's corrective
 artifact creation, a final reviewer pass, and the generated TP53 TCGA-BRCA
