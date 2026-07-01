@@ -64,15 +64,13 @@ def draw_callout(
         draw.text((x + 16, y + 44 + i * 18), line, fill=(220, 230, 236, 255), font=FONT_BODY)
 
     # Highlight target regions.
-    for idx, (x1, y1, x2, y2) in enumerate(boxes, start=1):
+    for x1, y1, x2, y2 in boxes:
         draw.rounded_rectangle(
             (x1, y1, x2, y2),
             radius=8,
             outline=(100, 210, 255, 255),
             width=4,
         )
-        draw.rounded_rectangle((x1 + 6, y1 + 6, x1 + 32, y1 + 32), radius=8, fill=(100, 210, 255, 235))
-        draw.text((x1 + 15, y1 + 9), str(idx), fill=(5, 20, 30, 255), font=FONT_TAG)
 
     return canvas.convert("P", palette=Image.Palette.ADAPTIVE, colors=128)
 
@@ -95,25 +93,25 @@ def build(capture_dir: Path, output: Path, contact: Path | None) -> None:
             "04_prompt_typed.png",
             "Local Qwen selected",
             "Claude Science is isolated on port 18765 and the model picker shows MTPLX Qwen 27B Local.",
-            [(388, 306, 915, 410), (660, 486, 875, 514)],
+            [(232, 378, 870, 486), (638, 486, 868, 520)],
         ),
         (
             "07_permission_card.png",
             "Python execution approval",
             "The app asks for local execution permission; the demo uses conversation-scoped approval.",
-            [(452, 224, 918, 507)],
+            [(178, 207, 862, 509), (188, 459, 314, 486)],
         ),
         (
             "09_after_download_wait.png",
             "Real TCGA data loaded",
             "Qwen downloads the Xena TCGA-BRCA matrix and extracts the TP53 row by barcode group.",
-            [(242, 126, 858, 205)],
+            [(182, 193, 858, 269)],
         ),
         (
             "current.png",
             "Reviewer catches the gap",
             "The reviewer flags missing deliverables, then Qwen self-corrects and starts the plotting step.",
-            [(240, 234, 860, 267), (240, 286, 860, 319)],
+            [(181, 234, 646, 267), (181, 287, 646, 319)],
         ),
         (
             "10_final_review_state.png",
@@ -125,7 +123,7 @@ def build(capture_dir: Path, output: Path, contact: Path | None) -> None:
             "12_after_split_timeout_check.png",
             "Generated figure visible",
             "The saved TP53 figure opens in split view, showing tumor vs normal expression from TCGA-BRCA.",
-            [(516, 44, 950, 530), (670, 486, 874, 514)],
+            [(516, 129, 949, 470)],
         ),
     ]
 
