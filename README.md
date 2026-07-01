@@ -193,8 +193,8 @@ For detailed evidence, caveats, and capture notes, see
 - `profiles/`: provider and experiment profiles.
 - `scripts/`: launch, status, smoke-test, and app verification helpers.
 - `tests/`: regression tests for streaming, tool filtering, and adapters.
-- `docs/`: access notes, provider setup, architecture, verification, roadmap,
-  comparison, demo-capture notes, and prior-art review.
+- `docs/`: start with the [`docs/README.md`](docs/README.md) index for setup,
+  architecture, evidence, verification, roadmap, and archived lab notes.
 - `AGENTS.md`: orientation for humans or agents cloning the repo.
 - `_local/`: ignored local-only runtime area.
 

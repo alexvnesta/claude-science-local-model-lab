@@ -39,8 +39,9 @@ backend.
 
 ## How To Work Here
 
-1. Start by reading `README.md`, this file, `docs/architecture.md`, and the
-   relevant profile under `profiles/`.
+1. Start by reading `README.md`, this file, `docs/README.md`, and the relevant
+   profile under `profiles/`. Use `docs/architecture.md` when changing proxy
+   behavior.
 2. Keep changes small and public-safe. If a run needs app state, inspect it only
    locally and summarize protocol shape, never raw user data.
 3. Prefer adding provider behavior behind profiles or small conversion helpers
