@@ -14,6 +14,21 @@ OpenRouter-free evidence includes provider smoke proof and model-picker routing
 proof, but the free-tier UI capture is not stable enough to publish as a
 working demo GIF.
 
+Current MTPLX/Qwen demo GIF:
+[`assets/qwen-mtplx-clean-demo.gif`](assets/qwen-mtplx-clean-demo.gif). It was
+captured on 2026-07-01 with:
+
+- MTPLX serving `mtplx-qwen36-27b-optimized-quality` on
+  `127.0.0.1:8030/v1`.
+- Proxy on `127.0.0.1:18081` using
+  `profiles/mtplx-qwen-analysis.env.example`.
+- Isolated Claude Science on `127.0.0.1:18765`.
+- Prompt: `No tools, no files, no browsing. Reply with exactly: QWEN MTPLX CLEAN OK`.
+
+The capture intentionally ends on the successful visible answer. In the same
+run, the reviewer later ended `Inconclusive` with no structured output, which
+is still a current Qwen/harness caveat for this no-tool demo path.
+
 ## Model Picker Labels
 
 Claude Science expects Claude-shaped model IDs. For local or remote non-Claude
@@ -101,3 +116,17 @@ A useful short GIF should show:
 
 Do not show account state, cookies, prompt logs, tool arguments, tool results,
 artifacts containing private data, or API keys.
+
+## Thinking Text
+
+Qwen may emit visible `<think>...</think>` text when Claude Science's larger
+foreground prompt triggers reasoning behavior, even when the upstream server is
+configured for terse answers. The MTPLX/Qwen analysis profile enables:
+
+```bash
+PROXY_STRIP_THINKING_TEXT=1
+```
+
+This strips leading local-model thinking blocks from buffered assistant text
+before the proxy emits Anthropic text. It is meant for clean prose/demo runs.
+Leave it off when debugging raw provider behavior or testing direct streaming.

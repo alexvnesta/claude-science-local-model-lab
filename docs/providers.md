@@ -63,6 +63,9 @@ Observed Qwen behavior:
   that is the known-good app path for short tool loops. Direct mode now has
   proxy-level heartbeat coverage, but it still needs fresh Claude Science
   app-side proof before becoming the default for Qwen execution workflows.
+- The analysis profile enables `PROXY_STRIP_THINKING_TEXT=1` so leading
+  Qwen-style `<think>...</think>` blocks do not appear in clean no-tool Claude
+  Science UI demos. Disable it when you need to debug raw model output.
 
 ## Ollama
 

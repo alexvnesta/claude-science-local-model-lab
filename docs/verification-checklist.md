@@ -167,6 +167,17 @@ For public screenshots or GIFs, also confirm:
 - No account state, cookies, API keys, private prompts, tool arguments, tool
   results, or private artifacts are visible.
 
+Known-good MTPLX/Qwen GIF capture:
+
+- Asset: `docs/assets/qwen-mtplx-clean-demo.gif`.
+- Frame: `be060a7f-5d68-4c19-a6ca-682356cd7789`.
+- Provider path: MTPLX on `127.0.0.1:8030/v1`, proxy on `127.0.0.1:18081`,
+  isolated app on `127.0.0.1:18765`.
+- Model label shown: `MTPLX Qwen 27B Local`.
+- Prompt/answer marker: `QWEN MTPLX CLEAN OK`.
+- Caveat: reviewer later ended inconclusive with no structured output; the GIF
+  proves foreground routing and rendering, not reviewer success.
+
 OpenRouter-free note from 2026-07-01: provider-only smoke passed, but full
 Claude Science UI prompts to two `:free` models hit upstream 429 capacity
 responses. Treat that as a provider-capacity caveat, not as a proxy routing

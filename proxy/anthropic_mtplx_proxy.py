@@ -92,6 +92,7 @@ DEFAULT_TOOL_VALIDATION = _env("PROXY_TOOL_VALIDATION", "schema")
 DEFAULT_TOOL_REPAIR = _env("PROXY_TOOL_REPAIR", "metadata")
 DEFAULT_FORCE_MENTIONED_TOOL = _env("PROXY_FORCE_MENTIONED_TOOL", "0")
 DEFAULT_PARSE_TEXT_TOOL_CALLS = _env("PROXY_PARSE_TEXT_TOOL_CALLS", "0")
+DEFAULT_STRIP_THINKING_TEXT = _env("PROXY_STRIP_THINKING_TEXT", "0")
 DEFAULT_SCHEMA_LOG_PATH = _env("PROXY_SCHEMA_LOG_PATH", "")
 DEFAULT_HARNESS_TOOLS = _env("PROXY_HARNESS_TOOLS", "submit_output")
 DEFAULT_HARNESS_TOOL_ALLOWLIST = _env("PROXY_HARNESS_TOOL_ALLOWLIST", "")
@@ -137,6 +138,7 @@ class ProxyConfig:
         tool_repair: str,
         force_mentioned_tool: bool,
         parse_text_tool_calls: bool,
+        strip_thinking_text: bool,
         schema_log_path: str,
         harness_tools: list[str],
         harness_tool_allowlist: list[str],
@@ -163,6 +165,7 @@ class ProxyConfig:
         self.tool_repair = tool_repair
         self.force_mentioned_tool = force_mentioned_tool
         self.parse_text_tool_calls = parse_text_tool_calls
+        self.strip_thinking_text = strip_thinking_text
         self.schema_log_path = schema_log_path
         self.harness_tools = harness_tools
         self.harness_tool_allowlist = harness_tool_allowlist
@@ -189,6 +192,7 @@ CONFIG = ProxyConfig(
     [],
     "schema",
     "metadata",
+    False,
     False,
     False,
     "",
@@ -285,6 +289,7 @@ CONFIG.tool_validation = parse_tool_validation(DEFAULT_TOOL_VALIDATION)
 CONFIG.tool_repair = parse_tool_repair(DEFAULT_TOOL_REPAIR)
 CONFIG.force_mentioned_tool = parse_bool(DEFAULT_FORCE_MENTIONED_TOOL)
 CONFIG.parse_text_tool_calls = parse_bool(DEFAULT_PARSE_TEXT_TOOL_CALLS)
+CONFIG.strip_thinking_text = parse_bool(DEFAULT_STRIP_THINKING_TEXT)
 CONFIG.schema_log_path = DEFAULT_SCHEMA_LOG_PATH
 CONFIG.harness_tools = parse_csv(DEFAULT_HARNESS_TOOLS)
 CONFIG.harness_tool_allowlist = parse_csv(DEFAULT_HARNESS_TOOL_ALLOWLIST)
@@ -1218,6 +1223,13 @@ def parse_json_object_text(text: str) -> dict[str, Any] | None:
 
 def clean_model_text(text: str) -> str:
     cleaned = text.strip()
+    if CONFIG.strip_thinking_text:
+        cleaned = re.sub(
+            r"^\s*<(?:think|thinking|reasoning?)\b[^>]*>.*?</(?:think|thinking|reasoning?)\s*>\s*",
+            "",
+            cleaned,
+            flags=re.DOTALL | re.IGNORECASE,
+        ).strip()
     for tag in ("mtplx_final_answer", "final_answer"):
         open_tag = f"<{tag}>"
         close_tag = f"</{tag}>"
@@ -2079,6 +2091,7 @@ class Handler(BaseHTTPRequestHandler):
                     "tool_repair": CONFIG.tool_repair,
                     "force_mentioned_tool": CONFIG.force_mentioned_tool,
                     "parse_text_tool_calls": CONFIG.parse_text_tool_calls,
+                    "strip_thinking_text": CONFIG.strip_thinking_text,
                     "schema_log_path": CONFIG.schema_log_path,
                     "harness_tools": CONFIG.harness_tools,
                     "harness_tool_allowlist": CONFIG.harness_tool_allowlist,
@@ -2299,6 +2312,14 @@ def main() -> int:
         help="Convert narrow textual <tool_call>[...] responses into Anthropic tool_use blocks.",
     )
     parser.add_argument(
+        "--strip-thinking-text",
+        default="1" if CONFIG.strip_thinking_text else "0",
+        help=(
+            "Strip leading local-model <think>/<reasoning> text from buffered "
+            "assistant responses before emitting Anthropic text."
+        ),
+    )
+    parser.add_argument(
         "--schema-log-path",
         default=CONFIG.schema_log_path,
         help="Optional JSONL path for redacted offered-tool schema inventories.",
@@ -2381,6 +2402,7 @@ def main() -> int:
     CONFIG.tool_repair = parse_tool_repair(args.tool_repair)
     CONFIG.force_mentioned_tool = parse_bool(args.force_mentioned_tool)
     CONFIG.parse_text_tool_calls = parse_bool(args.parse_text_tool_calls)
+    CONFIG.strip_thinking_text = parse_bool(args.strip_thinking_text)
     CONFIG.schema_log_path = args.schema_log_path
     CONFIG.harness_tools = parse_csv(args.harness_tools)
     CONFIG.harness_tool_allowlist = parse_csv(args.harness_tool_allowlist)
@@ -2412,6 +2434,7 @@ def main() -> int:
         f"tool_repair={CONFIG.tool_repair}; "
         f"force_mentioned_tool={CONFIG.force_mentioned_tool}; "
         f"parse_text_tool_calls={CONFIG.parse_text_tool_calls}; "
+        f"strip_thinking_text={CONFIG.strip_thinking_text}; "
         f"schema_log_path={CONFIG.schema_log_path or '<disabled>'}; "
         f"harness_tools={CONFIG.harness_tools}; "
         f"harness_tool_allowlist={CONFIG.harness_tool_allowlist or '<main allowlist>'}; "

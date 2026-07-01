@@ -167,6 +167,23 @@ class FakeOpenAIHandler(BaseHTTPRequestHandler):
                 },
             )
             return
+        if not payload.get("stream") and "strip thinking text" in prompt:
+            self._json(
+                200,
+                {
+                    "choices": [
+                        {
+                            "message": {
+                                "role": "assistant",
+                                "content": "<think>private reasoning</think>\n\nvisible answer",
+                            },
+                            "finish_reason": "stop",
+                        }
+                    ],
+                    "usage": {"prompt_tokens": 4, "completion_tokens": 2},
+                },
+            )
+            return
         if not payload.get("stream") and "check tool choice required" in prompt:
             self._json(
                 200,
@@ -1628,6 +1645,19 @@ def assert_wrapper_text_cleaned(proxy_port: int) -> None:
     assert payload["content"][0]["text"] == "wrapper stripped", payload
 
 
+def assert_thinking_text_stripped(proxy_port: int) -> None:
+    raw = post_json(
+        f"http://127.0.0.1:{proxy_port}/v1/messages",
+        {
+            "model": "claude-opus-4-8",
+            "max_tokens": 64,
+            "messages": [{"role": "user", "content": "strip thinking text"}],
+        },
+    )
+    payload = json.loads(raw)
+    assert payload["content"][0]["text"] == "visible answer", payload
+
+
 def assert_text_tool_call_adapter(
     proxy_port: int,
     prompt: str,
@@ -2103,6 +2133,23 @@ def main() -> int:
             compat_proc.wait(timeout=5)
         except subprocess.TimeoutExpired:
             compat_proc.kill()
+
+    strip_proxy_port = free_port()
+    strip_proc = start_proxy_process(
+        fake_port,
+        strip_proxy_port,
+        "drop",
+        ["--strip-thinking-text", "1"],
+    )
+    try:
+        wait_for_proxy(strip_proxy_port, strip_proc)
+        assert_thinking_text_stripped(strip_proxy_port)
+    finally:
+        strip_proc.terminate()
+        try:
+            strip_proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            strip_proc.kill()
         fake_server.shutdown()
     print("streaming proxy tests passed")
     return 0
