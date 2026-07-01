@@ -150,6 +150,8 @@ def font(size: int, *, mono: bool = False, bold: bool = False) -> ImageFont.Free
 FONT_TITLE = font(34, bold=True)
 FONT_TEXT = font(22)
 FONT_CODE = font(19, mono=True)
+FONT_CODE_SMALL = font(16, mono=True)
+FONT_TEXT_SMALL = font(18)
 FONT_LABEL = font(18, bold=True)
 
 
@@ -200,13 +202,27 @@ def draw_text_block(
     return y
 
 
-def draw_code_cell(draw: ImageDraw.ImageDraw, x: int, y: int, w: int, label: str, source: str) -> int:
-    lines = wrap_code(source)
-    h = 46 + len(lines) * 26 + 24
+def draw_code_cell(
+    draw: ImageDraw.ImageDraw,
+    x: int,
+    y: int,
+    w: int,
+    label: str,
+    source: str,
+    *,
+    wrap_width: int = 96,
+    code_font: ImageFont.FreeTypeFont | ImageFont.ImageFont = FONT_CODE,
+    line_h: int = 26,
+) -> int:
+    lines = wrap_code(source, width=wrap_width)
+    h = 46 + len(lines) * line_h + 24
     draw.rounded_rectangle((x, y, x + w, y + h), radius=12, fill=(247, 249, 252), outline=(210, 218, 226), width=2)
     draw.text((x + 18, y + 14), label, font=FONT_LABEL, fill=(88, 96, 105))
     draw.rounded_rectangle((x + 96, y + 12, x + w - 18, y + h - 16), radius=8, fill=(255, 255, 255), outline=(226, 232, 240))
-    draw_text_block(draw, lines, x + 116, y + 28, code=True, fill=(24, 32, 42))
+    line_y = y + 28
+    for line in lines:
+        draw.text((x + 116, line_y), line, font=code_font, fill=(24, 32, 42))
+        line_y += line_h
     return y + h + 24
 
 
@@ -237,11 +253,101 @@ def render_page(output: Path, title: str, cells: list[tuple[str, str]], result_t
     image.save(output)
 
 
+def draw_plot_preview(draw: ImageDraw.ImageDraw, x: int, y: int, w: int, h: int) -> None:
+    draw.rounded_rectangle((x, y, x + w, y + h), radius=12, fill=(255, 255, 255), outline=(210, 218, 226), width=2)
+    draw.text((x + 24, y + 22), "Rendered plot preview", font=font(24, bold=True), fill=(24, 32, 42))
+    draw.text((x + 24, y + 56), "TP53 expression in TCGA-BRCA", font=FONT_TEXT_SMALL, fill=(82, 91, 104))
+
+    plot_x0 = x + 64
+    plot_y0 = y + 112
+    plot_x1 = x + w - 34
+    plot_y1 = y + h - 92
+
+    draw.line((plot_x0, plot_y0, plot_x0, plot_y1), fill=(80, 80, 80), width=2)
+    draw.line((plot_x0, plot_y1, plot_x1, plot_y1), fill=(80, 80, 80), width=2)
+
+    ymin, ymax = 8.0, 12.4
+
+    def sy(value: float) -> float:
+        return plot_y1 - (value - ymin) / (ymax - ymin) * (plot_y1 - plot_y0)
+
+    for tick in [8, 9, 10, 11, 12]:
+        ty = sy(tick)
+        draw.line((plot_x0 - 6, ty, plot_x0, ty), fill=(80, 80, 80), width=2)
+        draw.line((plot_x0, ty, plot_x1, ty), fill=(229, 234, 240), width=1)
+        draw.text((x + 25, ty - 11), str(tick), font=FONT_TEXT_SMALL, fill=(82, 91, 104))
+
+    def box(cx: int, q1: float, median: float, q3: float, low: float, high: float, fill: tuple[int, int, int]) -> None:
+        box_w = 84
+        draw.line((cx, sy(low), cx, sy(high)), fill=(55, 55, 55), width=2)
+        draw.line((cx - 26, sy(low), cx + 26, sy(low)), fill=(55, 55, 55), width=2)
+        draw.line((cx - 26, sy(high), cx + 26, sy(high)), fill=(55, 55, 55), width=2)
+        draw.rectangle((cx - box_w // 2, sy(q3), cx + box_w // 2, sy(q1)), fill=fill, outline=(55, 55, 55), width=2)
+        draw.line((cx - box_w // 2, sy(median), cx + box_w // 2, sy(median)), fill=(228, 26, 28), width=3)
+
+    normal_x = int(plot_x0 + (plot_x1 - plot_x0) * 0.34)
+    tumor_x = int(plot_x0 + (plot_x1 - plot_x0) * 0.70)
+    box(normal_x, 10.17, 10.57, 10.91, 9.0, 11.8, (216, 232, 216))
+    box(tumor_x, 10.11, 10.64, 11.04, 8.8, 12.0, (232, 216, 216))
+
+    for i in range(58):
+        offset = ((i * 37) % 42) - 21
+        value = 10.49 + ((((i * 19) % 100) - 50) / 100) * 1.0
+        draw.ellipse((normal_x + offset - 2, sy(value) - 2, normal_x + offset + 2, sy(value) + 2), fill=(43, 140, 62))
+    for i in range(90):
+        offset = ((i * 31) % 54) - 27
+        value = 10.51 + ((((i * 23) % 100) - 50) / 100) * 1.25
+        draw.ellipse((tumor_x + offset - 2, sy(value) - 2, tumor_x + offset + 2, sy(value) + 2), fill=(178, 34, 34))
+
+    draw.text((normal_x - 58, plot_y1 + 16), "Normal", font=FONT_TEXT_SMALL, fill=(42, 72, 45))
+    draw.text((tumor_x - 76, plot_y1 + 16), "Primary tumor", font=FONT_TEXT_SMALL, fill=(96, 45, 45))
+    draw.text((plot_x0 + 80, plot_y0 + 10), "Delta = +0.02", font=FONT_TEXT_SMALL, fill=(24, 32, 42))
+    draw.text((x + 24, y + h - 52), "Saved as tp53_expression_plot.png", font=FONT_TEXT_SMALL, fill=(82, 91, 104))
+
+
+def render_plot_page(output: Path) -> None:
+    width = 1400
+    title = "TP53 TCGA-BRCA notebook source: plot + rendered figure"
+    code_h = 46 + len(wrap_code(PLOT_CODE, width=62)) * 22 + 24
+    right_h = 650 + 260 + 24
+    height = 102 + max(code_h, right_h) + 34
+    image = Image.new("RGB", (width, height), (255, 255, 255))
+    draw = ImageDraw.Draw(image)
+
+    draw.rectangle((0, 0, width, 72), fill=(33, 38, 45))
+    draw.text((34, 20), title, font=FONT_TITLE, fill=(255, 255, 255))
+
+    y = 102
+    draw_code_cell(
+        draw,
+        42,
+        y,
+        780,
+        "In [3]:",
+        PLOT_CODE,
+        wrap_width=62,
+        code_font=FONT_CODE_SMALL,
+        line_h=22,
+    )
+    draw_plot_preview(draw, 850, y, 508, 650)
+
+    result_y = y + 674
+    result_h = 54 + len(RESULT_TEXT.splitlines()) * 28
+    draw.rounded_rectangle((850, result_y, 1358, result_y + result_h), radius=12, fill=(248, 250, 246), outline=(206, 222, 204), width=2)
+    line_y = result_y + 24
+    for line in RESULT_TEXT.splitlines():
+        draw.text((878, line_y), line, font=FONT_TEXT_SMALL, fill=(42, 72, 45))
+        line_y += 28
+
+    output.parent.mkdir(parents=True, exist_ok=True)
+    image.save(output)
+
+
 def build() -> None:
     NOTEBOOK_PATH.parent.mkdir(parents=True, exist_ok=True)
     NOTEBOOK_PATH.write_text(json.dumps(notebook(), indent=2) + "\n")
     render_page(SHOT_1, "TP53 TCGA-BRCA notebook source: data load", [("In [1]:", SETUP_CODE), ("In [2]:", EXTRACT_CODE)])
-    render_page(SHOT_2, "TP53 TCGA-BRCA notebook source: plot + artifacts", [("In [3]:", PLOT_CODE)], RESULT_TEXT)
+    render_plot_page(SHOT_2)
 
 
 def main() -> None:
