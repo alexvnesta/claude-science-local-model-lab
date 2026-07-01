@@ -78,5 +78,5 @@ under `_local/`.
 - The proxy is still one large Python file. Split it only when the split reduces
   real complexity and keeps tests clear.
 - OpenRouter and Ollama support use the generic OpenAI-compatible surface. Model
-  tool quality will vary; use `PROXY_TOOL_MODE=drop` for prose-only models and
-  focused allowlists for tool-capable models.
+  tool quality will vary; use `PROXY_TOOL_MODE=drop` for prose-only model tests
+  and schema validation for tool-capable models.

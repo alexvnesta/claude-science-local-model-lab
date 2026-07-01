@@ -10,7 +10,7 @@ direct-stream idle heartbeats, streamed tool-call argument assembly, malformed
 streamed tool-call filtering, in-band stream error events, finite SSE close,
 client disconnect survival, request ID response headers, tool-call filtering,
 schema validation, Qwen-style reviewer tool-call text, reviewer-specific tool
-allowlists, Python smuggling guards, harness closeout forcing, and redacted
+handling, Python smuggling guards, harness closeout forcing, and redacted
 health metrics.
 
 It is not yet a polished production gateway. The main risks are long-running
@@ -39,7 +39,7 @@ tool turns, and needs reviewer-loop guardrails.
    mode still needs app-side proof for long Claude Science generations,
    foreground Python plus artifact save loops, reviewer/harness completion, and
    cancellation under a real browser/app disconnect before it should become the
-   default Qwen execution profile.
+   default Qwen streaming mode.
 
 2. Split the proxy into modules.
 
@@ -64,8 +64,8 @@ tool turns, and needs reviewer-loop guardrails.
    Claude Science request kinds (`plain`, `tools_hidden`, `tool_agent`,
    `harness`) should remain the broker's core abstraction. Provider selection,
    stream mode, and tool adapter choices should hang off that classification
-   rather than being mixed into app launch scripts. Keep foreground tool
-   allowlists, reviewer tool allowlists, and reviewer closeout policy separate.
+   rather than being mixed into app launch scripts. Keep reviewer tool handling
+   and reviewer closeout policy separate from foreground request handling.
 
 5. Improve observability without leaking data.
 

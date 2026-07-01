@@ -80,7 +80,6 @@ export PROXY_UPSTREAM_RETRY_DELAY="${PROXY_UPSTREAM_RETRY_DELAY:-2}"
 export PROXY_STREAM_MODE="${PROXY_STREAM_MODE:-direct}"
 export PROXY_STREAM_HEARTBEAT_SECONDS="${PROXY_STREAM_HEARTBEAT_SECONDS:-0}"
 export PROXY_TOOL_MODE="${PROXY_TOOL_MODE:-pass}"
-export PROXY_TOOL_ALLOWLIST="${PROXY_TOOL_ALLOWLIST:-}"
 export PROXY_TOOL_VALIDATION="${PROXY_TOOL_VALIDATION:-schema}"
 export PROXY_TOOL_REPAIR="${PROXY_TOOL_REPAIR:-metadata}"
 export PROXY_FORCE_MENTIONED_TOOL="${PROXY_FORCE_MENTIONED_TOOL:-0}"
@@ -110,7 +109,6 @@ exec python3 "$ROOT/proxy/anthropic_mtplx_proxy.py" \
   --stream-mode "$PROXY_STREAM_MODE" \
   --stream-heartbeat-seconds "$PROXY_STREAM_HEARTBEAT_SECONDS" \
   --tool-mode "$PROXY_TOOL_MODE" \
-  --tool-allowlist "$PROXY_TOOL_ALLOWLIST" \
   --tool-validation "$PROXY_TOOL_VALIDATION" \
   --tool-repair "$PROXY_TOOL_REPAIR" \
   --force-mentioned-tool "$PROXY_FORCE_MENTIONED_TOOL" \

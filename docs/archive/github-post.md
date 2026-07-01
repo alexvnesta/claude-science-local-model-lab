@@ -96,12 +96,11 @@ expose OpenAI-compatible chat completions. The proxy does the translation:
 - Tool calls still need live workflow stress testing, but the proxy now forwards
   tools through a validation boundary: unknown tools, malformed JSON args, and
   schema-invalid inputs are filtered before Anthropic `tool_use` is emitted.
-  The Qwen analysis profile can also repair observed reviewer pseudo-tool-call
-  formats when explicitly enabled.
-- Do not use one universal allowlist for every request shape. Reviewer/harness
-  calls need `submit_output`, while foreground science-agent calls may need a
-  much smaller tool subset than the full Claude Science inventory. Reviewers
-  may also need artifact inspection tools that should not automatically be
+  The proxy can also repair observed reviewer pseudo-tool-call formats when
+  explicitly enabled.
+- Do not collapse every request shape into one path. Reviewer/harness calls need
+  `submit_output`, and reviewers may also need artifact inspection tools that
+  should not automatically be
   exposed to the foreground agent.
 - Local models can smuggle app-tool calls into Python source. The proxy now
   filters observed cases such as `skill({"skill":"figure-style"})`, path-only
@@ -138,7 +137,6 @@ PROXY_MODEL_DISPLAY_NAMES='{"claude-opus-4-8":"Gemma Local"}'
 PROXY_MAX_TOKENS_CAP=4096
 PROXY_STREAM_MODE=direct
 PROXY_TOOL_MODE=pass
-PROXY_TOOL_ALLOWLIST=
 PROXY_TOOL_VALIDATION=schema
 PROXY_TOOL_REPAIR=metadata
 PROXY_HARNESS_TOOLS=submit_output
@@ -164,17 +162,8 @@ PROXY_PROFILE=profiles/openrouter.env.example \
 ./scripts/start-proxy-detached.sh
 ```
 
-For local Qwen-style models, start with the focused probe profile:
-
-```bash
-PROXY_PROFILE=profiles/mtplx-qwen-tool-probe.env.example ./scripts/start-proxy-detached.sh
-```
-
-For execution-tool probes after that:
-
-```bash
-PROXY_PROFILE=profiles/mtplx-qwen-execution-probe.env.example ./scripts/start-proxy-detached.sh
-```
+For local Qwen-style models, use the default MTPLX/Qwen profile and preserve
+Claude Science's app-pruned foreground tool inventory.
 
 Then run:
 

@@ -14,11 +14,9 @@ binding, request monitoring, provider auth, and token/request optimization.
 The gap this repo addresses is narrower: Claude Science appears to exercise a
 Claude-like Messages path, but it also emits distinct foreground, hidden-tool,
 and reviewer/harness request shapes. The reviewer/harness path needs structural
-tools such as `submit_output` even when the foreground science-agent allowlist
-is intentionally small. In live Qwen runs, reviewer frames also needed their
-own artifact-inspection allowlist and closeout policy, separate from the
-foreground execution allowlist. None of the reviewed projects directly targets
-Claude Science's foreground/reviewer split.
+tools such as `submit_output`, and live Qwen reviewer frames also needed
+artifact-inspection tools and closeout policy. None of the reviewed projects
+directly targets Claude Science's foreground/reviewer split.
 
 ## Reviewed Projects
 
@@ -245,8 +243,8 @@ This repo's unique implementation work is the Claude Science local lab:
 - Configurable profiles for generic local backends and MTPLX/Qwen.
 - Request classification as `plain`, `tools_hidden`, `tool_agent`, or
   `harness`.
-- Separate harness tool list, defaulting to `submit_output`, that bypasses the
-  foreground tool allowlist.
+- Separate harness tool list, defaulting to `submit_output`, for structural
+  reviewer requests.
 - Reviewer-specific tool allowlist and opt-in reviewer closeout forcing for
   local models that over-inspect instead of submitting structured review.
 - Schema validation against the request's offered tool schemas.

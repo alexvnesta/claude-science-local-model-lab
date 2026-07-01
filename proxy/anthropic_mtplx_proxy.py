@@ -87,7 +87,6 @@ DEFAULT_UPSTREAM_RETRY_DELAY = float(_env("PROXY_UPSTREAM_RETRY_DELAY", "2"))
 DEFAULT_STREAM_MODE = _env("PROXY_STREAM_MODE", "direct")
 DEFAULT_STREAM_HEARTBEAT_SECONDS = float(_env("PROXY_STREAM_HEARTBEAT_SECONDS", "0"))
 DEFAULT_TOOL_MODE = _env("PROXY_TOOL_MODE", "pass")
-DEFAULT_TOOL_ALLOWLIST = _env("PROXY_TOOL_ALLOWLIST", "")
 DEFAULT_TOOL_VALIDATION = _env("PROXY_TOOL_VALIDATION", "schema")
 DEFAULT_TOOL_REPAIR = _env("PROXY_TOOL_REPAIR", "metadata")
 DEFAULT_FORCE_MENTIONED_TOOL = _env("PROXY_FORCE_MENTIONED_TOOL", "0")
@@ -133,7 +132,6 @@ class ProxyConfig:
         stream_mode: str,
         stream_heartbeat_seconds: float,
         tool_mode: str,
-        tool_allowlist: list[str],
         tool_validation: str,
         tool_repair: str,
         force_mentioned_tool: bool,
@@ -160,7 +158,6 @@ class ProxyConfig:
         self.stream_mode = stream_mode
         self.stream_heartbeat_seconds = stream_heartbeat_seconds
         self.tool_mode = tool_mode
-        self.tool_allowlist = tool_allowlist
         self.tool_validation = tool_validation
         self.tool_repair = tool_repair
         self.force_mentioned_tool = force_mentioned_tool
@@ -189,7 +186,6 @@ CONFIG = ProxyConfig(
     DEFAULT_STREAM_MODE,
     DEFAULT_STREAM_HEARTBEAT_SECONDS,
     DEFAULT_TOOL_MODE,
-    [],
     "schema",
     "metadata",
     False,
@@ -284,7 +280,6 @@ def parse_bool(value: str) -> bool:
 
 
 CONFIG.advertised_models = parse_csv(DEFAULT_ADVERTISED_MODELS)
-CONFIG.tool_allowlist = parse_csv(DEFAULT_TOOL_ALLOWLIST)
 CONFIG.tool_validation = parse_tool_validation(DEFAULT_TOOL_VALIDATION)
 CONFIG.tool_repair = parse_tool_repair(DEFAULT_TOOL_REPAIR)
 CONFIG.force_mentioned_tool = parse_bool(DEFAULT_FORCE_MENTIONED_TOOL)
@@ -574,11 +569,6 @@ def anthropic_to_openai(payload: dict[str, Any], stream: bool = False) -> dict[s
     messages: list[dict[str, Any]] = []
     payload_tool_names = tool_names(payload)
     allowlist = effective_tool_allowlist(payload)
-    forwarded_payload_tool_names = [
-        name
-        for name in payload_tool_names
-        if allowlist is None or name in allowlist
-    ]
 
     system = payload.get("system")
     system_text = block_text(system)
@@ -590,39 +580,16 @@ def anthropic_to_openai(payload: dict[str, Any], stream: bool = False) -> dict[s
                 "role": "system",
                 "content": (
                     "Local proxy note: Claude Science offered tools for this turn, "
-                    "but this profile intentionally hides tool schemas from the local model. "
+                    "but this proxy mode intentionally hides tool schemas from the local model. "
                     "Do not emit tool-call markup, anonymous_function tags, XML tags, or function-call text. "
                     "Do not claim that you searched, browsed, read files, ran code, created artifacts, "
                     "or made a figure. If the user asks for live research, files, code execution, "
-                    "or artifacts, say this local profile cannot execute those tools and provide only a "
+                    "or artifacts, say this proxy mode cannot execute those tools and provide only a "
                     "short direct draft, plan, or caveated analysis based on the visible prompt. "
                     "Keep the answer under 220 words so it can finish in one response."
                 ),
             }
         )
-    if (
-        CONFIG.tool_mode == "pass"
-        and allowlist is not None
-        and payload_tool_names
-        and set(forwarded_payload_tool_names) != set(payload_tool_names)
-    ):
-        visible = ", ".join(forwarded_payload_tool_names) or "none"
-        messages.append(
-            {
-                "role": "system",
-                "content": (
-                    "Local proxy note: this profile forwards only these Claude Science "
-                    f"tools upstream: {visible}. Other app tools are intentionally hidden "
-                    "from the local model for this run. Use only the visible tools as real "
-                    "tool calls. Do not invoke hidden Claude Science tools inside Python, "
-                    "through host/kernel APIs, or via raw tool-call markup. If the task "
-                    "needs a hidden discovery, browser, file, or reviewer tool, answer from "
-                    "the visible prompt or say this run should be retried with a profile "
-                    "that exposes that tool."
-                ),
-            }
-        )
-
     for message in payload.get("messages") or []:
         if not isinstance(message, dict):
             continue
@@ -816,8 +783,6 @@ def effective_tool_allowlist(payload: dict[str, Any]) -> set[str] | None:
             return None
         return harness_allowlist | harness_tools
 
-    if CONFIG.tool_allowlist:
-        return set(CONFIG.tool_allowlist) | harness_tools
     return None
 
 
@@ -2222,7 +2187,6 @@ class Handler(BaseHTTPRequestHandler):
                     "stream_mode": CONFIG.stream_mode,
                     "stream_heartbeat_seconds": CONFIG.stream_heartbeat_seconds,
                     "tool_mode": CONFIG.tool_mode,
-                    "tool_allowlist": CONFIG.tool_allowlist,
                     "tool_validation": CONFIG.tool_validation,
                     "tool_repair": CONFIG.tool_repair,
                     "force_mentioned_tool": CONFIG.force_mentioned_tool,
@@ -2421,11 +2385,6 @@ def main() -> int:
         help="pass forwards Claude Science tools upstream; drop omits tool schemas for direct-analysis local models.",
     )
     parser.add_argument(
-        "--tool-allowlist",
-        default=",".join(CONFIG.tool_allowlist),
-        help="Optional comma-separated tool names to forward upstream in pass mode.",
-    )
-    parser.add_argument(
         "--tool-validation",
         default=CONFIG.tool_validation,
         choices=("off", "name", "schema"),
@@ -2463,7 +2422,7 @@ def main() -> int:
     parser.add_argument(
         "--harness-tools",
         default=",".join(CONFIG.harness_tools),
-        help="Comma-separated structural harness tools that bypass the agent allowlist.",
+        help="Comma-separated structural tools that identify reviewer/harness requests.",
     )
     parser.add_argument(
         "--harness-tool-allowlist",
@@ -2533,7 +2492,6 @@ def main() -> int:
     CONFIG.stream_mode = parse_stream_mode(args.stream_mode)
     CONFIG.stream_heartbeat_seconds = max(0.0, args.stream_heartbeat_seconds)
     CONFIG.tool_mode = parse_tool_mode(args.tool_mode)
-    CONFIG.tool_allowlist = parse_csv(args.tool_allowlist)
     CONFIG.tool_validation = parse_tool_validation(args.tool_validation)
     CONFIG.tool_repair = parse_tool_repair(args.tool_repair)
     CONFIG.force_mentioned_tool = parse_bool(args.force_mentioned_tool)
@@ -2565,7 +2523,6 @@ def main() -> int:
         f"stream_mode={CONFIG.stream_mode}; "
         f"stream_heartbeat_seconds={CONFIG.stream_heartbeat_seconds}; "
         f"tool_mode={CONFIG.tool_mode}; "
-        f"tool_allowlist={CONFIG.tool_allowlist or '<all>'}; "
         f"tool_validation={CONFIG.tool_validation}; "
         f"tool_repair={CONFIG.tool_repair}; "
         f"force_mentioned_tool={CONFIG.force_mentioned_tool}; "
@@ -2573,7 +2530,7 @@ def main() -> int:
         f"strip_thinking_text={CONFIG.strip_thinking_text}; "
         f"schema_log_path={CONFIG.schema_log_path or '<disabled>'}; "
         f"harness_tools={CONFIG.harness_tools}; "
-        f"harness_tool_allowlist={CONFIG.harness_tool_allowlist or '<main allowlist>'}; "
+        f"harness_tool_allowlist={CONFIG.harness_tool_allowlist or '<all reviewer tools>'}; "
         "harness_force_submit_after_tool_results="
         f"{CONFIG.harness_force_submit_after_tool_results}; "
         f"claude_science_compat={CONFIG.claude_science_compat}; "

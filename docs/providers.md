@@ -55,53 +55,48 @@ The public checkpoint ID and the model alias exposed by the local server do not
 have to be identical; `UPSTREAM_OPENAI_MODEL` just needs to match the running
 server.
 
-Start with prose or narrow tool profiles before broadening tool exposure:
+Start with the default MTPLX/Qwen profile when testing Claude Science behavior.
+The proxy forwards the tool surface that Claude Science already pruned for the
+request. Use temporary environment overrides when debugging a specific proxy
+knob:
 
 ```bash
-PROXY_PROFILE=profiles/mtplx-qwen-analysis.env.example ./scripts/start-proxy-detached.sh
-PROXY_PROFILE=profiles/mtplx-qwen-research-planning.env.example ./scripts/start-proxy-detached.sh
-PROXY_PROFILE=profiles/mtplx-qwen-tool-probe.env.example ./scripts/start-proxy-detached.sh
-PROXY_PROFILE=profiles/mtplx-qwen-execution-probe.env.example ./scripts/start-proxy-detached.sh
+PROXY_PROFILE=profiles/mtplx-qwen.env.example ./scripts/start-proxy-detached.sh
+PROXY_TOOL_MODE=drop PROXY_PROFILE=profiles/mtplx-qwen.env.example ./scripts/start-proxy-detached.sh
 ```
 
 Observed Qwen behavior:
 
-- It can produce valid `python` and `save_artifacts` calls when the foreground
-  tool surface is narrow and explicitly requested.
-- The execution profile is intentionally not a general discovery profile. If a
-  research-planning prompt needs `search_skills`, `skill`, browser, or other
-  non-execution tools, use the research-planning profile or the direct-analysis
-  profile instead of the execution profile. The research-planning profile
-  exposes a focused public-data discovery surface: `web_search`,
-  `fetch_article_fulltext`, `search_skills`, `skill`, compute-discovery tools,
-  `summary_query`, `boundary`, `generate_plan`, and `update_step_status`, while
-  hiding `python` and `save_artifacts`.
+- Claude Science warms many MCP connectors, then sends a pruned tool inventory
+  on each model request. In the captured TE-expression planning run, the
+  foreground agent offered 26 tools and reviewer/harness requests offered 6
+  tools. The default Qwen profile should preserve those app-pruned request
+  shapes instead of replacing them with a hand-built task subset.
+- It can produce valid `python` and `save_artifacts` calls when those tools are
+  isolated and explicitly requested, but that is a diagnostic finding, not a
+  separate recommended Claude Science mode.
 - It may split a requested artifact workflow across several Python calls even
   when asked to do it in one call.
 - It may try to call Claude Science tools inside Python source, for example
   `skill({"skill":"figure-style"})`, assigned calls such as
   `mcp_skills = search_skills(...)`, or unavailable host/kernel APIs such as
-  `import kernel` and `host.skills.list()`. The proxy filters those shapes
-  before local execution and adds an allowlist guard when pass-through profiles
-  hide offered app tools.
-- Reviewer frames should not inherit the foreground allowlist. The execution
-  profile uses `PROXY_HARNESS_TOOL_ALLOWLIST` so reviewers can inspect artifacts
-  with `repl` and `read_file`.
+  `import kernel` and `host.skills.list()`. The proxy filters those shapes before
+  local execution.
+- Use `PROXY_HARNESS_TOOL_ALLOWLIST` only when reviewer requests need a
+  different inspection surface than foreground requests.
 - Reviewer frames may over-inspect instead of calling `submit_output`. The
-  execution profile enables `PROXY_HARNESS_FORCE_SUBMIT_AFTER_TOOL_RESULTS=6`
-  so a long reviewer inspection loop is closed by forwarding only
-  `submit_output`.
+  optional `PROXY_HARNESS_FORCE_SUBMIT_AFTER_TOOL_RESULTS` closeout guard can
+  hide reviewer inspection tools after repeated non-harness tool results.
 - Local model loops are slow. The refined Qwen artifact run took multiple
   model turns for TSV, figure, Markdown, artifact save, final answer, and
   reviewer inspection. Treat this as a capability proof, not yet an ergonomic
   production default.
-- MTPLX/Qwen profiles still default to `PROXY_STREAM_MODE=buffered` because
+- The MTPLX/Qwen profile still defaults to `PROXY_STREAM_MODE=buffered` because
   that is the known-good app path for short tool loops. Direct mode now has
   proxy-level heartbeat coverage, but it still needs fresh Claude Science
   app-side proof before becoming the default for Qwen execution workflows.
-- The analysis profile enables `PROXY_STRIP_THINKING_TEXT=1` so leading
-  Qwen-style `<think>...</think>` blocks do not appear in clean no-tool Claude
-  Science UI demos. Disable it when you need to debug raw model output.
+- Set `PROXY_STRIP_THINKING_TEXT=1` only when you intentionally want to hide
+  leading Qwen-style `<think>...</think>` blocks in a UI demo.
 
 ## Ollama
 
@@ -169,8 +164,8 @@ OPENROUTER_ENV_FILE=/path/to/ignored/.env ./scripts/smoke-openrouter.sh
 ```
 
 Remote models vary widely in tool-call behavior. Start with short non-tool
-prompts, then try a narrow `PROXY_TOOL_ALLOWLIST` before exposing the full
-Claude Science tool inventory.
+prompts, then test the full Claude Science foreground request shape with schema
+validation before treating the route as usable.
 
 A provider-only smoke can pass while a full Claude Science foreground UI turn
 still receives an upstream 429 from a `:free` model. Claude Science foreground
@@ -216,8 +211,8 @@ Provider checklist:
 - Use `PROXY_STREAM_MODE=buffered` only when direct streaming breaks the app
   path; long buffered generations can starve Claude Science of events.
 - Use `PROXY_TOOL_MODE=drop` for prose-only model tests.
-- Use `PROXY_TOOL_MODE=pass`, `PROXY_TOOL_VALIDATION=schema`, and a focused
-  `PROXY_TOOL_ALLOWLIST` for live tool-loop experiments.
+- Use `PROXY_TOOL_MODE=pass` and `PROXY_TOOL_VALIDATION=schema` for live
+  tool-loop experiments.
 
 Official references:
 

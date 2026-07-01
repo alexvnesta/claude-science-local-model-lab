@@ -18,18 +18,33 @@ from typing import Any
 
 
 ROOT = Path(__file__).resolve().parents[1]
-RESEARCH_PLANNING_TOOL_ALLOWLIST = [
+APP_PRUNED_FOREGROUND_TOOL_NAMES = [
     "web_search",
+    "bash",
+    "python",
+    "r",
+    "repl",
+    "save_artifacts",
+    "read_file",
+    "edit_file",
+    "manage_environments",
+    "manage_packages",
     "fetch_article_fulltext",
-    "search_skills",
-    "skill",
     "list_compute",
     "compute_details",
     "ask_about_compute",
+    "skill",
+    "ask_user",
+    "search_skills",
     "summary_query",
     "boundary",
-    "generate_plan",
+    "request_network_access",
+    "list_host_grants",
+    "request_host_access",
+    "delete_host_files",
     "update_step_status",
+    "wait_for_notification",
+    "generate_plan",
 ]
 
 
@@ -148,34 +163,6 @@ class FakeOpenAIHandler(BaseHTTPRequestHandler):
             guard_present = any(
                 message.get("role") == "system"
                 and "Local proxy note: Claude Science offered tools" in str(message.get("content") or "")
-                for message in messages
-                if isinstance(message, dict)
-            )
-            self._json(
-                200,
-                {
-                    "choices": [
-                        {
-                            "message": {
-                                "role": "assistant",
-                                "content": "guard present" if guard_present else "guard missing",
-                            },
-                            "finish_reason": "stop",
-                        }
-                    ],
-                    "usage": {"prompt_tokens": 4, "completion_tokens": 2},
-                },
-            )
-            return
-        if not payload.get("stream") and "check pass allowlist guard" in prompt:
-            guard_present = any(
-                message.get("role") == "system"
-                and "this profile forwards only these Claude Science tools" in str(
-                    message.get("content") or ""
-                )
-                and "hidden Claude Science tools inside Python" in str(
-                    message.get("content") or ""
-                )
                 for message in messages
                 if isinstance(message, dict)
             )
@@ -1595,28 +1582,6 @@ def generic_tool(name: str) -> dict[str, Any]:
     }
 
 
-def env_file_value(path: Path, key: str) -> str | None:
-    for raw_line in path.read_text(encoding="utf-8").splitlines():
-        line = raw_line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        found_key, value = line.split("=", 1)
-        if found_key == key:
-            return value.strip().strip("'\"")
-    return None
-
-
-def assert_research_planning_profile_file() -> None:
-    profile = ROOT / "profiles" / "mtplx-qwen-research-planning.env.example"
-    allowlist = env_file_value(profile, "PROXY_TOOL_ALLOWLIST")
-    assert allowlist == ",".join(RESEARCH_PLANNING_TOOL_ALLOWLIST), allowlist
-    assert "python" not in (allowlist or "").split(","), allowlist
-    assert "save_artifacts" not in (allowlist or "").split(","), allowlist
-    display_names = env_file_value(profile, "PROXY_MODEL_DISPLAY_NAMES") or ""
-    assert "MTPLX Qwen 27B Research" in display_names, display_names
-    assert "MTPLX Qwen 27B Local" not in display_names, display_names
-
-
 def assert_invalid_native_tool_filtered(proxy_port: int, prompt: str) -> None:
     raw = post_json(
         f"http://127.0.0.1:{proxy_port}/v1/messages",
@@ -1784,82 +1749,22 @@ def assert_tool_choice_required(proxy_port: int) -> None:
     assert upstream_seen["tool_count"] == 1, upstream_seen
 
 
-def assert_tool_allowlist(proxy_port: int) -> None:
+def assert_app_pruned_foreground_tools_pass_through(proxy_port: int) -> None:
     raw = post_json(
         f"http://127.0.0.1:{proxy_port}/v1/messages",
         {
             "model": "claude-opus-4-8",
             "max_tokens": 64,
-            "tools": [bash_tool(), search_skills_tool()],
+            "tools": [
+                generic_tool(name)
+                for name in APP_PRUNED_FOREGROUND_TOOL_NAMES
+            ],
             "messages": [{"role": "user", "content": "check tool allowlist"}],
         },
     )
     payload = json.loads(raw)
     upstream_seen = json.loads(payload["content"][0]["text"])
-    assert upstream_seen["tool_names"] == ["search_skills"], upstream_seen
-
-
-def assert_pass_allowlist_guard(proxy_port: int) -> None:
-    raw = post_json(
-        f"http://127.0.0.1:{proxy_port}/v1/messages",
-        {
-            "model": "claude-opus-4-8",
-            "max_tokens": 64,
-            "tools": [bash_tool(), search_skills_tool()],
-            "messages": [{"role": "user", "content": "check pass allowlist guard"}],
-        },
-    )
-    payload = json.loads(raw)
-    assert payload["content"][0]["text"] == "guard present", payload
-
-
-def assert_research_planning_allowlist(proxy_port: int) -> None:
-    offered = [
-        generic_tool("web_search"),
-        generic_tool("fetch_article_fulltext"),
-        search_skills_tool(),
-        generic_tool("skill"),
-        generic_tool("list_compute"),
-        generic_tool("compute_details"),
-        generic_tool("ask_about_compute"),
-        generic_tool("summary_query"),
-        generic_tool("boundary"),
-        generic_tool("generate_plan"),
-        generic_tool("update_step_status"),
-        python_tool(),
-        generic_tool("save_artifacts"),
-        repl_tool(),
-    ]
-    raw = post_json(
-        f"http://127.0.0.1:{proxy_port}/v1/messages",
-        {
-            "model": "claude-opus-4-8",
-            "max_tokens": 64,
-            "tools": offered,
-            "messages": [{"role": "user", "content": "check tool allowlist"}],
-        },
-    )
-    payload = json.loads(raw)
-    upstream_seen = json.loads(payload["content"][0]["text"])
-    assert upstream_seen["tool_names"] == RESEARCH_PLANNING_TOOL_ALLOWLIST, upstream_seen
-    assert "python" not in upstream_seen["tool_names"], upstream_seen
-    assert "save_artifacts" not in upstream_seen["tool_names"], upstream_seen
-    assert "repl" not in upstream_seen["tool_names"], upstream_seen
-
-
-def assert_harness_tool_allowlist_bypass(proxy_port: int) -> None:
-    raw = post_json(
-        f"http://127.0.0.1:{proxy_port}/v1/messages",
-        {
-            "model": "claude-opus-4-8",
-            "max_tokens": 64,
-            "tools": [bash_tool(), search_skills_tool(), submit_output_tool()],
-            "messages": [{"role": "user", "content": "check harness allowlist"}],
-        },
-    )
-    payload = json.loads(raw)
-    upstream_seen = json.loads(payload["content"][0]["text"])
-    assert upstream_seen["tool_names"] == ["search_skills", "submit_output"], upstream_seen
+    assert upstream_seen["tool_names"] == APP_PRUNED_FOREGROUND_TOOL_NAMES, upstream_seen
 
 
 def assert_harness_tool_specific_allowlist(proxy_port: int) -> None:
@@ -2509,7 +2414,6 @@ def start_proxy_env_alias_process(
 
 
 def main() -> int:
-    assert_research_planning_profile_file()
     fake_server, fake_port = start_fake_server()
     proxy_port = free_port()
     proc = start_proxy_process(
@@ -2646,6 +2550,7 @@ def main() -> int:
     pass_proc = start_proxy_process(fake_port, pass_proxy_port, "pass")
     try:
         wait_for_proxy(pass_proxy_port, pass_proc)
+        assert_app_pruned_foreground_tools_pass_through(pass_proxy_port)
         assert_tool_choice_required(pass_proxy_port)
         assert_single_harness_tool_forced(pass_proxy_port)
         assert_completed_harness_tool_not_forced(pass_proxy_port)
@@ -2656,50 +2561,12 @@ def main() -> int:
         except subprocess.TimeoutExpired:
             pass_proc.kill()
 
-    allowlist_proxy_port = free_port()
-    allowlist_proc = start_proxy_process(
-        fake_port,
-        allowlist_proxy_port,
-        "pass",
-        ["--tool-allowlist", "search_skills"],
-    )
-    try:
-        wait_for_proxy(allowlist_proxy_port, allowlist_proc)
-        assert_tool_allowlist(allowlist_proxy_port)
-        assert_pass_allowlist_guard(allowlist_proxy_port)
-        assert_harness_tool_allowlist_bypass(allowlist_proxy_port)
-    finally:
-        allowlist_proc.terminate()
-        try:
-            allowlist_proc.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            allowlist_proc.kill()
-
-    research_proxy_port = free_port()
-    research_proc = start_proxy_process(
-        fake_port,
-        research_proxy_port,
-        "pass",
-        ["--tool-allowlist", ",".join(RESEARCH_PLANNING_TOOL_ALLOWLIST)],
-    )
-    try:
-        wait_for_proxy(research_proxy_port, research_proc)
-        assert_research_planning_allowlist(research_proxy_port)
-    finally:
-        research_proc.terminate()
-        try:
-            research_proc.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            research_proc.kill()
-
     harness_allowlist_proxy_port = free_port()
     harness_allowlist_proc = start_proxy_process(
         fake_port,
         harness_allowlist_proxy_port,
         "pass",
         [
-            "--tool-allowlist",
-            "search_skills",
             "--harness-tool-allowlist",
             "repl,read_file,submit_output",
             "--harness-force-submit-after-tool-results",

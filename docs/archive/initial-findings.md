@@ -118,13 +118,9 @@ Additional hardening:
 - `PROXY_TOOL_VALIDATION=off|name|schema` is configurable. The default
   `schema` mode emits Anthropic `tool_use` only for offered tool names with
   JSON-object arguments that satisfy the offered schema subset.
-- `PROXY_TOOL_ALLOWLIST` is configurable. A fresh pass-mode probe with all 26
-  tools forwarded hung against MTPLX/Qwen, so focused tool-loop tests should
-  start with the allowlisted probe profile before broadening.
 - `PROXY_HARNESS_TOOLS` is configurable and defaults to `submit_output`.
-  Harness/reviewer tools bypass the foreground science-tool allowlist because
-  reviewer frames need `submit_output` even when Qwen should see only a small
-  task-relevant foreground tool set.
+  Harness/reviewer tools are treated separately because reviewer frames need
+  structural `submit_output` handling.
 - `PROXY_TOOL_REPAIR=metadata` is configurable. A live pass-mode foreground
   probe showed Qwen selecting the correct `search_skills` tool but omitting the
   required `human_description` metadata field; metadata repair fills that
@@ -161,9 +157,9 @@ Additional hardening:
 
 Live UI evidence:
 
-- With `profiles/mtplx-qwen-analysis.env.example`, Claude Science sent a
-  MASLD-HCC analysis request with `tools=26` and `upstream_tools=0`; the proxy
-  routed it to MTPLX and Claude Science rendered a real analysis in the UI.
+- A legacy no-tool probe sent a MASLD-HCC analysis request with `tools=26` and
+  `upstream_tools=0`; the proxy routed it to MTPLX and Claude Science rendered a
+  real analysis in the UI.
 - The persisted frame `60449c6c-b5db-4f9b-970b-656a23abf2ee` completed with a
   bounded MASLD-HCC response on tumor-intrinsic dedifferentiation vs
   stromal/sampling contamination.
@@ -178,8 +174,7 @@ Live UI evidence:
   selected the correct foreground `search_skills` tool but omitted required
   `human_description`; before metadata repair this was filtered, leaving an
   empty turn.
-- With `profiles/mtplx-qwen-tool-probe.env.example`, the foreground
-  `search_skills` probe completed: the proxy repaired missing
+- A legacy narrow foreground probe completed: the proxy repaired missing
   `human_description`, Claude Science executed the real `search_skills` tool,
   returned a `tool_result`, and Qwen produced a final answer. The persisted
   frame was `365cf30d-cec0-4d6d-a38f-2e6efed7c00f`.
@@ -203,11 +198,11 @@ Live UI evidence:
   `structured_output: {"findings":[],"verdict":"pass"}` after real
   `submit_output` `tool_use` / `tool_result` messages.
 - A later focused profile exposed an agent-shape mistake: the same global
-  allowlist was being applied to foreground and reviewer requests. Reviewer
-  frame `6cd7c709-26e5-45de-9410-afd0aae7a07f` was asked to call
-  `submit_output` while the focused foreground allowlist hid that tool from the
-  upstream request. The proxy now treats configured harness tools separately
-  and direct probes show `kind=harness` with forced `submit_output`, and
+  filtering policy was being applied to foreground and reviewer requests.
+  Reviewer frame `6cd7c709-26e5-45de-9410-afd0aae7a07f` was asked to call
+  `submit_output` while that policy hid the tool from the upstream request. The
+  proxy now treats configured harness tools separately and direct probes show
+  `kind=harness` with forced `submit_output`, and
   `kind=tool_agent` with forced `skill`.
 - A temporary execution-only proxy on `127.0.0.1:18081` exposed only `python`
   and `save_artifacts`. Direct Qwen probes produced schema-valid `tool_use`
@@ -240,9 +235,9 @@ Remaining caveat:
 
 Additional app-side execution evidence:
 
-- The execution profile now enables `PROXY_CLAUDE_SCIENCE_COMPAT=1`, which
-  normalizes OpenAI-style tool ids to Anthropic-looking `toolu_...` ids and
-  adds `caller: {"type":"direct"}` to emitted tool-use blocks.
+- Claude Science compatibility mode normalizes OpenAI-style tool ids to
+  Anthropic-looking `toolu_...` ids and adds `caller: {"type":"direct"}` to
+  emitted tool-use blocks.
 - Frame `b1ff2cd4-dac4-4417-96f1-6cd39c491dbc` is the strongest verified
   foreground execution proof so far:
   - Qwen emitted a compat `python` tool call.
@@ -282,8 +277,7 @@ Gemma/OpenRouter proof:
 
 Local Qwen proof:
 
-- Frame `55f1c397-47ea-4d9a-adda-48cf357fc4c4` ran through local MTPLX/Qwen
-  with `profiles/mtplx-qwen-execution-probe.env.example`.
+- Frame `55f1c397-47ea-4d9a-adda-48cf357fc4c4` ran through local MTPLX/Qwen.
 - The foreground frame produced `QWEN_REFINED_DONE`, saved
   `qwen_refined_scores.tsv`, `qwen_refined_analysis.md`, and
   `qwen_refined_figure.png`, and reported the correct top two modules:
@@ -299,8 +293,8 @@ Local Qwen proof:
   across several Python turns instead of creating all files in one call.
 - The refined Qwen figure was readable and unclipped, but Panel B became a
   component breakdown rather than the requested simple mechanism schematic.
-- The reviewer improved after the Qwen execution profile added
-  `PROXY_HARNESS_TOOL_ALLOWLIST` for `repl`, `read_file`, `boundary`,
+- The reviewer improved after adding `PROXY_HARNESS_TOOL_ALLOWLIST` for `repl`,
+  `read_file`, `boundary`,
   `summary_query`, `query_target_history`, and `submit_output`. The reviewer
   used real `repl` and `read_file` calls to inspect artifacts and verify score
   math.

@@ -49,7 +49,6 @@ looks like this:
   },
   "stream_mode": "buffered",
   "tool_mode": "pass",
-  "tool_allowlist": ["python", "save_artifacts"],
   "harness_tools": ["submit_output"],
   "harness_tool_allowlist": [
     "repl",

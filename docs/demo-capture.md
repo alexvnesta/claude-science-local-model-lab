@@ -23,8 +23,7 @@ The TP53 capture was recorded on 2026-07-01 with:
 
 - MTPLX serving `mtplx-qwen36-27b-optimized-quality` on
   `127.0.0.1:8030/v1`.
-- Proxy on `127.0.0.1:18081` using
-  `profiles/mtplx-qwen-execution-probe.env.example`.
+- Proxy on `127.0.0.1:18081` using the MTPLX/Qwen backend.
 - Isolated Claude Science on `127.0.0.1:18765`.
 - Visible model label: `MTPLX Qwen 27B Local`.
 - Prompt: a constrained TP53 task that pinned the Xena matrix URL:
@@ -74,8 +73,8 @@ An older exact-reply MTPLX/Qwen capture was recorded on 2026-07-01 with:
 
 - MTPLX serving `mtplx-qwen36-27b-optimized-quality` on
   `127.0.0.1:8030/v1`.
-- Proxy on `127.0.0.1:18081` using
-  `profiles/mtplx-qwen-analysis.env.example`.
+- Proxy on `127.0.0.1:18081` using the MTPLX/Qwen backend with a no-tool
+  prompt.
 - Isolated Claude Science on `127.0.0.1:18765`.
 - Prompt: `No tools, no files, no browsing. Reply with exactly: QWEN MTPLX CLEAN OK`.
 
@@ -177,7 +176,7 @@ artifacts containing private data, or API keys.
 
 Qwen may emit visible `<think>...</think>` text when Claude Science's larger
 foreground prompt triggers reasoning behavior, even when the upstream server is
-configured for terse answers. The MTPLX/Qwen analysis profile enables:
+configured for terse answers. For a clean prose/demo run, set:
 
 ```bash
 PROXY_STRIP_THINKING_TEXT=1

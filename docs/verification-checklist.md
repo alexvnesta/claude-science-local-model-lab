@@ -50,26 +50,6 @@ logs classified the model requests as `tools_hidden` and `tool_agent`.
 PROXY_PROFILE=profiles/mtplx-qwen.env.example ./scripts/start-proxy-detached.sh
 ```
 
-For direct-analysis runs with MTPLX/Qwen, prefer:
-
-```bash
-PROXY_PROFILE=profiles/mtplx-qwen-analysis.env.example ./scripts/start-proxy-detached.sh
-```
-
-For public-data discovery/planning prompts, such as deciding what breast cancer
-TE-expression resources are available before reprocessing anything, prefer:
-
-```bash
-PROXY_PROFILE=profiles/mtplx-qwen-research-planning.env.example ./scripts/start-proxy-detached.sh
-```
-
-This profile exposes discovery/planning tools such as `web_search`,
-`fetch_article_fulltext`, `search_skills`, `skill`, `list_compute`,
-`compute_details`, `ask_about_compute`, `summary_query`, `boundary`,
-`generate_plan`, and `update_step_status`, while hiding `python` and
-`save_artifacts`. Switch to the execution profile only when the next turn truly
-needs local code execution or artifact creation.
-
 For another local backend, copy and edit the generic profile:
 
 ```bash
@@ -89,9 +69,9 @@ Expected:
 - `/healthz` returns the configured upstream, provider name, advertised model
   list, and redacted provider summary.
 - `/healthz` shows the intended `stream_mode`, `tool_mode`,
-  `stream_heartbeat_seconds`, `tool_allowlist`, `tool_validation`,
-  `tool_repair`, `force_mentioned_tool`, `parse_text_tool_calls`, and optional
-  `schema_log_path` values.
+  `stream_heartbeat_seconds`, `tool_validation`, `tool_repair`,
+  `force_mentioned_tool`, `parse_text_tool_calls`, and optional `schema_log_path`
+  values.
 - `/healthz` shows `harness_tools`, normally `["submit_output"]`.
 - If the active profile sets them, `/healthz` also shows
   `harness_tool_allowlist` and `harness_force_submit_after_tool_results`.
@@ -223,10 +203,10 @@ Use this only after the proxy-level tests pass. Do not use the official Claude
 Science app on `127.0.0.1:8765`; direct-mode app proof must use the copied app
 under `_local/` on `127.0.0.1:18765`.
 
-Create an ignored direct profile from the closest real backend profile:
+Create an ignored direct profile from the default backend profile:
 
 ```bash
-cp profiles/mtplx-qwen-execution-probe.env.example _local/mtplx-qwen-direct.env
+cp profiles/mtplx-qwen.env.example _local/mtplx-qwen-direct.env
 # edit _local/mtplx-qwen-direct.env:
 #   PROXY_STREAM_MODE=direct
 #   PROXY_STREAM_HEARTBEAT_SECONDS=15
@@ -256,13 +236,14 @@ Try, in fresh sessions when practical:
 - Long no-tool response: ask for a numbered 40-line direct answer with no
   tools. Expected: the UI streams visibly, does not freeze, and `/healthz`
   counts the request under `stream_mode=direct`.
-- Constrained tool loop: use the execution profile and explicitly ask for one
-  `python` call followed by `save_artifacts` for a tiny generated text file or
-  plot. Expected: Claude Science persists `tool_use`, `tool_result`,
+- Tool loop: ask for a tiny generated text file or plot. Expected: Claude
+  Science offers the relevant tools, the proxy forwards the app-pruned tool
+  surface, and Claude Science persists `tool_use`, `tool_result`,
   artifact/version state, and a final answer.
 - Reviewer/harness pass: expected proxy logs and `/healthz` classify reviewer
   traffic as `kind=harness`, with reviewer inspection tools from
-  `PROXY_HARNESS_TOOL_ALLOWLIST` rather than the foreground allowlist.
+  `PROXY_HARNESS_TOOL_ALLOWLIST` only when that reviewer-specific override is
+  configured.
 - Cancellation: interrupt or close a long direct-stream UI turn. Expected: the
   proxy logs a client disconnect, remains healthy, and `/healthz` still
   responds without exposing prompt or tool data.
@@ -277,7 +258,7 @@ Direct-mode app-side attempt from 2026-07-01: proxy-level fake-upstream tests
 passed, but live Claude Science app proof was not run because MTPLX
 `127.0.0.1:8030` was not reachable, the isolated app was not listening on
 `127.0.0.1:18765`, and the existing lab proxy on `127.0.0.1:18080` was running
-the buffered execution profile. The official app remained separate on
+the buffered Qwen profile. The official app remained separate on
 `127.0.0.1:8765`.
 
 ## 6. Bounded Analysis Proof
@@ -297,8 +278,6 @@ Expected:
 
 - The UI renders a substantive answer, not just a gateway echo.
 - The frame eventually reaches `completed` in the isolated SQLite database.
-- For the Qwen analysis profile, `_local/proxy.log` should show Claude Science
-  tool schemas dropped before upstream, e.g. `tools=26 upstream_tools=0`.
 - In `PROXY_TOOL_MODE=drop`, tool-heavy prompts should produce an honest
   limitation or draft plan. They should not contain `<anonymous_function>`,
   `<tool_call>`, XML function tags, or claims that searches/files/code/artifacts
@@ -312,15 +291,6 @@ Expected:
 - With `PROXY_TOOL_REPAIR=metadata`, missing `human_description` may be filled
   for Qwen-generated calls. Missing semantic fields such as `command`, `code`,
   or `file_path` should still be filtered.
-- If full-tool forwarding stalls, restart with
-  `profiles/mtplx-qwen-tool-probe.env.example` and verify a single allowlisted
-  tool loop before broadening the allowlist.
-- For execution-tool probes, restart with
-  `profiles/mtplx-qwen-execution-probe.env.example` and begin with explicit,
-  single-tool prompts for `python` or `save_artifacts`. Direct proxy success
-  means Qwen formatted the tool call; app-side success additionally requires a
-  persisted Claude Science `tool_result` and, for artifacts, a saved artifact
-  version.
 - New app-side execution proofs should use the compatibility profile so tool
   ids are normalized to `toolu_...` and emitted tool-use blocks include
   `caller: {"type":"direct"}`. Older pre-compat frames with OpenAI-style
@@ -332,8 +302,8 @@ Expected:
   Science frame. If multiple tools are mentioned, the proxy chooses the earliest
   explicit tool mention, not the longest tool name.
 - Reviewer/harness calls should log `kind=harness`, forward `submit_output`
-  even if it is absent from `PROXY_TOOL_ALLOWLIST`, and force a named upstream
-  `tool_choice` when `submit_output` is the only forwarded tool. After a
+  and force a named upstream `tool_choice` when `submit_output` is the only
+  forwarded tool. After a
   completed `submit_output` tool result is present in the conversation, the
   proxy should log `not forcing completed harness tool_choice 'submit_output'`
   and allow the reviewer follow-up to end normally instead of looping.
@@ -358,11 +328,6 @@ Expected:
   such as `skill({"skill": "figure-style"})`,
   `mcp_skills = search_skills({"prefix": "mcp-"})`, `import kernel`, and
   `host.skills.list()`.
-- When a pass-through profile hides some offered Claude Science tools with an
-  allowlist, the proxy adds a system note telling the local model which tools
-  are actually visible and not to call hidden tools through Python, host/kernel
-  APIs, or raw tool-call markup. Invalid text-tool-call markup for hidden tools
-  should be filtered rather than displayed in the UI.
 - Reviewer status may still be model-specific. If it is inconclusive, inspect
   the reviewer message shape and add a narrow adapter plus a regression test.
   Observed Qwen reviewer shapes include markdown-wrapped function text, fenced
@@ -391,9 +356,8 @@ Expected:
 - OpenRouter/Gemma proof:
   `d18147f0-825d-4930-857b-55406366cb09` ran against
   `google/gemma-4-31b-it:free` through `profiles/openrouter.env.example` with
-  `PROXY_STREAM_MODE=direct`, `PROXY_TOOL_MODE=pass`,
-  `PROXY_TOOL_ALLOWLIST=python,save_artifacts`, forced mentioned tools, and
-  Claude Science compatibility enabled. The frame required one Python retry
+  `PROXY_STREAM_MODE=direct`, `PROXY_TOOL_MODE=pass`, forced mentioned tools,
+  and Claude Science compatibility enabled. The frame required one Python retry
   after `pandas.to_markdown()` failed without `tabulate`, then saved
   `gemma_clean_scores.tsv`, `gemma_clean_analysis.md`, and
   `gemma_clean_figure.png`. Saved artifact versions were
@@ -409,8 +373,7 @@ Expected:
   this proves the loop, not publication-quality figure layout.
 - Local Qwen refined artifact proof:
   `55f1c397-47ea-4d9a-adda-48cf357fc4c4` ran against
-  `mtplx-qwen36-27b-optimized-quality` through
-  `profiles/mtplx-qwen-execution-probe.env.example`. The foreground frame
+  `mtplx-qwen36-27b-optimized-quality`. The foreground frame
   produced `QWEN_REFINED_DONE` and saved all requested artifacts:
   `f2193067-2ac6-4497-a51b-1beeea0540fd` (`qwen_refined_scores.tsv`,
   checksum `ce0867bc037b7bc3caba31688c890317860bc1a2cc64249de7182a9a7590fa57`),
@@ -428,8 +391,7 @@ Expected:
   was added.
 - Local Qwen TP53 workflow proof:
   `0b03da82-efe5-4440-be56-651d7053d1fb` ran against
-  `mtplx-qwen36-27b-optimized-quality` through
-  `profiles/mtplx-qwen-execution-probe.env.example`. The foreground frame
+  `mtplx-qwen36-27b-optimized-quality`. The foreground frame
   downloaded the TCGA-BRCA Xena expression matrix, extracted TP53 values for
   primary tumor (`-01`) and normal (`-11`) barcodes, generated a PNG
   box-and-strip plot, saved `tp53_expression_plot.png`, and saved

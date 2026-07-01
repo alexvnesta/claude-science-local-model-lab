@@ -190,7 +190,7 @@ For detailed evidence, caveats, and capture notes, see
 - `proxy/`: dependency-light Anthropic Messages to OpenAI-compatible proxy.
   `observability.py` and `request_shape.py` are the first extracted modules;
   the conversion/server code is still being split out incrementally.
-- `profiles/`: provider and experiment profiles.
+- `profiles/`: provider/backend profiles.
 - `scripts/`: launch, status, smoke-test, and app verification helpers.
 - `tests/`: regression tests for streaming, tool filtering, and adapters.
 - `docs/`: start with the [`docs/README.md`](docs/README.md) index for setup,
