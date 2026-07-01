@@ -29,6 +29,10 @@ The TP53 capture was recorded on 2026-07-01 with:
 - Visible model label: `MTPLX Qwen 27B Local`.
 - Prompt: a constrained TP53 task that pinned the Xena matrix URL:
   `https://tcga.xenahubs.net/download/TCGA.BRCA.sampleMap/HiSeqV2.gz`.
+- Public data source: UCSC Xena TCGA-BRCA `HiSeqV2`, downloadable from
+  `https://tcga.xenahubs.net/download/TCGA.BRCA.sampleMap/HiSeqV2.gz`; see
+  also the [UCSC Xena TCGA hub](https://tcga.xenahubs.net/) and
+  [TCGA Breast Cancer cohort page](https://xenabrowser.net/datapages/?cohort=TCGA+Breast+Cancer+%28BRCA%29).
 
 Evidence from the run:
 

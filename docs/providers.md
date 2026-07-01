@@ -31,6 +31,18 @@ UPSTREAM_OPENAI_BASE_URL=http://127.0.0.1:8030/v1
 UPSTREAM_OPENAI_MODEL=mtplx-qwen36-27b-optimized-quality
 ```
 
+MTPLX/Qwen is a companion local stack for the exact demo path; it is not
+distributed in this repository. For another local Qwen stack to follow the same
+path, expose an OpenAI-compatible server with:
+
+```text
+GET  /v1/models
+POST /v1/chat/completions
+```
+
+Then set `UPSTREAM_OPENAI_BASE_URL` and `UPSTREAM_OPENAI_MODEL` in a local
+profile. The model slug must match whatever the upstream server advertises.
+
 Start with prose or narrow tool profiles before broadening tool exposure:
 
 ```bash
@@ -77,6 +89,8 @@ ignored by Ollama.
 Start Ollama and pull a model:
 
 ```bash
+# If the Ollama app/daemon is not already running, start `ollama serve`
+# in a separate terminal first.
 ollama pull qwen3:8b
 ```
 
@@ -154,6 +168,18 @@ Use `profiles/openai-compatible.env.example` for vLLM, LM Studio, llama.cpp
 server, Together, Fireworks, or any similar backend that implements
 `POST /v1/chat/completions`.
 
+Concrete local examples:
+
+- LM Studio: start the local server in LM Studio and use
+  `UPSTREAM_OPENAI_BASE_URL=http://127.0.0.1:1234/v1`; set
+  `UPSTREAM_OPENAI_MODEL` to the exact loaded model ID shown by LM Studio.
+- vLLM: start an OpenAI-compatible server such as
+  `vllm serve <model> --api-key token-abc123`, then use the server's base URL
+  ending before `/chat/completions`.
+- llama.cpp server: use a build/server mode that exposes
+  `POST /v1/chat/completions`; tool behavior depends on the model's chat
+  template and function-calling support.
+
 Provider checklist:
 
 - Confirm the base URL should end before `/chat/completions`.
@@ -168,3 +194,9 @@ Provider checklist:
 - Use `PROXY_TOOL_MODE=drop` for prose-only model tests.
 - Use `PROXY_TOOL_MODE=pass`, `PROXY_TOOL_VALIDATION=schema`, and a focused
   `PROXY_TOOL_ALLOWLIST` for live tool-loop experiments.
+
+Official references:
+
+- [LM Studio OpenAI compatibility](https://lmstudio.ai/docs/developer/openai-compat)
+- [vLLM OpenAI-compatible server](https://docs.vllm.ai/en/stable/serving/online_serving/)
+- [llama.cpp server OpenAI-compatible endpoint](https://github.com/ggml-org/llama.cpp/blob/master/tools/server/README.md)

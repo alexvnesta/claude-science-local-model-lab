@@ -30,3 +30,6 @@ Official references:
 - [Enable Claude Science](https://claude.com/docs/claude-science/enable-claude-science)
 - [Claude Science product page](https://claude.com/product/claude-science)
 - [Claude Science overview](https://claude.com/docs/claude-science/overview)
+- [Claude Science command-line settings](https://claude.com/docs/claude-science/command-line-settings)
+- [How Claude Science works with your data](https://claude.com/docs/claude-science/how-claude-science-works-with-your-data)
+- [Claude Science legal and compliance](https://claude.com/docs/claude-science/legal-and-compliance)

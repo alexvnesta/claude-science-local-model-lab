@@ -8,6 +8,20 @@ This repo contains the proxy, profiles, tests, and docs. It does not include
 Claude Science, Anthropic proprietary files, account state, app data, logs,
 prompts, tool outputs, or artifacts.
 
+## TL;DR
+
+Traditional Claude Code proxies mostly translate one chat/tool loop from an
+Anthropic-shaped client to another provider. Claude Science is different: in
+observed runs it sends separate foreground-agent, hidden-tool, tool-agent, and
+reviewer/harness requests. This proxy preserves those request kinds, keeps
+reviewer tools such as `submit_output` separate from foreground tools such as
+`python` and `save_artifacts`, validates returned tool calls against the exact
+schemas Claude Science offered, and runs against a copied local app so the
+official Claude Science install stays untouched.
+
+If you only want the architecture distinction, read
+[`docs/why-this-proxy.md`](docs/why-this-proxy.md).
+
 ## What This Is
 
 - A small proxy from Claude Science's Anthropic-style `/v1/messages` traffic to
@@ -59,6 +73,24 @@ See [`docs/access.md`](docs/access.md) and
 
 ## Quick Start
 
+Prerequisites:
+
+- macOS with official Claude Science beta access and the app installed.
+- Python 3.10+ and `curl`.
+- One OpenAI-compatible upstream backend:
+  - exact demo path: an external MTPLX/Qwen server on `127.0.0.1:8030/v1`;
+  - local portable path: Ollama on `127.0.0.1:11434/v1`;
+  - remote path: OpenRouter or another OpenAI-compatible provider.
+
+Provider paths at a glance:
+
+| Path | Provider prerequisite | Start command | Caveat |
+| --- | --- | --- | --- |
+| Ollama | Ollama app or `ollama serve`, plus a pulled model | `OLLAMA_MODEL=qwen3:8b PROXY_PROFILE=profiles/ollama.env.example ./scripts/start-proxy-detached.sh` | Most reproducible public local path, but smaller local models may need prose-only mode. |
+| MTPLX/Qwen | Separate companion MTPLX/Qwen stack on `127.0.0.1:8030/v1` | `PROXY_PROFILE=profiles/mtplx-qwen.env.example ./scripts/start-proxy-detached.sh` | Exact GIF path, but MTPLX/Qwen itself is not bundled here. |
+| OpenRouter | `OPENROUTER_API_KEY` and a model slug | `OPENROUTER_API_KEY=... OPENROUTER_MODEL=... PROXY_PROFILE=profiles/openrouter.env.example ./scripts/start-proxy-detached.sh` | Free routes can pass smoke tests but fail large Claude Science UI prompts with capacity errors. |
+| Generic | Any provider with `GET /v1/models` and `POST /v1/chat/completions` | Copy `profiles/openai-compatible.env.example` to `profiles/local.env` and edit it | Tool quality depends heavily on the model and provider. |
+
 Copy your installed Claude Science app into the ignored lab area:
 
 ```bash
@@ -66,32 +98,73 @@ mkdir -p _local
 cp -R "/Applications/Claude Science.app" "_local/Claude Science.app"
 ```
 
-Start a proxy profile:
+Install test dependencies:
 
 ```bash
-PROXY_PROFILE=profiles/mtplx-qwen.env.example ./scripts/start-proxy-detached.sh
+python3 -m pip install -r requirements-dev.txt
 ```
 
-Or use another OpenAI-compatible provider:
+Choose one provider profile.
+
+Most reproducible local path:
 
 ```bash
+# If the Ollama app/daemon is not already running, start `ollama serve`
+# in a separate terminal first.
+ollama pull qwen3:8b
 OLLAMA_MODEL=qwen3:8b \
 PROXY_PROFILE=profiles/ollama.env.example \
 ./scripts/start-proxy-detached.sh
+```
 
+Exact MTPLX/Qwen demo path:
+
+```bash
+PROXY_PROFILE=profiles/mtplx-qwen.env.example \
+./scripts/start-proxy-detached.sh
+```
+
+This assumes your companion MTPLX/Qwen setup is already serving
+`mtplx-qwen36-27b-optimized-quality` at `http://127.0.0.1:8030/v1`. MTPLX/Qwen
+itself is not bundled in this repo. If your companion stack exposes a different
+base URL or model name, copy `profiles/openai-compatible.env.example` to
+`profiles/local.env` and set those values explicitly.
+
+OpenRouter path:
+
+```bash
 OPENROUTER_API_KEY=... \
 OPENROUTER_MODEL=provider/model-slug \
 PROXY_PROFILE=profiles/openrouter.env.example \
 ./scripts/start-proxy-detached.sh
 ```
 
-Smoke test the proxy:
+Generic OpenAI-compatible path:
 
 ```bash
-PROXY_PROFILE=profiles/mtplx-qwen.env.example ./scripts/doctor.sh
+cp profiles/openai-compatible.env.example profiles/local.env
+# edit profiles/local.env for your base URL, model, and key
+PROXY_PROFILE=profiles/local.env ./scripts/start-proxy-detached.sh
+```
+
+Smoke test the proxy after it starts:
+
+```bash
+PROXY_PROFILE=<the same profile you started> ./scripts/doctor.sh
 ./scripts/smoke-proxy.sh
 ./scripts/test-streaming-proxy.sh
 ```
+
+Expected first-run signals:
+
+- `start-proxy-detached.sh` prints `Proxy started with PID ...`, a log path
+  under `_local/proxy.log`, and a JSON `/healthz` payload.
+- `doctor.sh` prints `ok: _local/ is ignored by git`; upstream or proxy
+  warnings usually mean the provider or proxy is not running yet.
+- `smoke-proxy.sh` prints `/healthz`, a token-count response, and a small
+  Anthropic-shaped message response containing the requested marker text.
+- `test-streaming-proxy.sh` runs the local fake-provider streaming tests and
+  should exit successfully without needing Claude Science or a live provider.
 
 `/healthz` is intentionally safe to share in bug reports. It includes provider
 identity, stream mode, request-kind counters, provider latency summaries, retry
@@ -120,6 +193,9 @@ For this gateway test, reply with exactly LOCAL MODEL OK. Do not use tools.
 
 If routing is local, `_local/proxy.log` will show `POST /v1/messages`.
 
+For provider-specific notes and official Ollama/OpenRouter references, see
+[`docs/providers.md`](docs/providers.md).
+
 MTPLX note: the Qwen profiles enable `PROXY_MTPLX_AVOID_BACKGROUND_BYPASS=1`.
 This raises small Claude Science helper/reviewer calls above MTPLX's 48-token
 background cutoff when their request shape would otherwise return an immediate
@@ -134,6 +210,9 @@ analysis prompts, focused tool loops, reviewer `submit_output`, `python` plus
 `save_artifacts` probes, OpenRouter/Gemma artifact runs, local Qwen artifact
 runs, reviewer inspection-tool routing, and local/provider model-picker labels.
 
+For a public-safe evidence summary, see
+[`docs/evidence-bundle.md`](docs/evidence-bundle.md).
+
 Primary Qwen/MTPLX workflow GIF:
 
 ![Claude Science running a TP53 TCGA-BRCA analysis through local MTPLX Qwen 27B](docs/assets/qwen-mtplx-tp53-workflow-demo.gif)
@@ -145,6 +224,8 @@ plot opened in split view.
 
 Public source notebook for the TP53 analysis:
 [`examples/tp53_brca_xena_analysis.ipynb`](examples/tp53_brca_xena_analysis.ipynb).
+The demo uses the public UCSC Xena TCGA-BRCA `HiSeqV2` expression matrix:
+[`TCGA.BRCA.sampleMap/HiSeqV2.gz`](https://tcga.xenahubs.net/download/TCGA.BRCA.sampleMap/HiSeqV2.gz).
 
 <img src="docs/assets/tp53-notebook-source-1.png" alt="Notebook source for loading TCGA-BRCA TP53 expression data" width="900">
 
