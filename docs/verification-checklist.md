@@ -34,6 +34,16 @@ Expected:
 - Proxy uses `127.0.0.1:18080`.
 - MTPLX or another OpenAI-compatible backend is reachable.
 
+Client update note from 2026-06-30: the official updater reported
+`2e3e6f91 -> 2bc1ac85`, then showed
+`UPDATE_SMOKE_FAIL: downloaded binary failed to launch - not replacing`, so the
+active official and lab-copy binaries were not half-updated. A safe temp copy of
+`~/.claude-science/bin/claude-science` was updated to
+`0.1.0-dev.20260630.t212931.sha2bc1ac8` and launched against a temp copy of the
+lab data with `ANTHROPIC_BASE_URL=http://127.0.0.1:18080`. That new binary still
+called the proxy through `GET /v1/models?limit=1000` and `/v1/messages`; proxy
+logs classified the model requests as `tools_hidden` and `tool_agent`.
+
 ## 2. Start Proxy
 
 ```bash
