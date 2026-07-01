@@ -154,6 +154,34 @@ class FakeOpenAIHandler(BaseHTTPRequestHandler):
                 },
             )
             return
+        if not payload.get("stream") and "check pass allowlist guard" in prompt:
+            guard_present = any(
+                message.get("role") == "system"
+                and "this profile forwards only these Claude Science tools" in str(
+                    message.get("content") or ""
+                )
+                and "hidden Claude Science tools inside Python" in str(
+                    message.get("content") or ""
+                )
+                for message in messages
+                if isinstance(message, dict)
+            )
+            self._json(
+                200,
+                {
+                    "choices": [
+                        {
+                            "message": {
+                                "role": "assistant",
+                                "content": "guard present" if guard_present else "guard missing",
+                            },
+                            "finish_reason": "stop",
+                        }
+                    ],
+                    "usage": {"prompt_tokens": 4, "completion_tokens": 2},
+                },
+            )
+            return
         if not payload.get("stream") and "mtplx wrapper text" in prompt:
             self._json(
                 200,
@@ -522,6 +550,118 @@ class FakeOpenAIHandler(BaseHTTPRequestHandler):
                 },
             )
             return
+        if not payload.get("stream") and "assigned tool-smuggled python native tool" in prompt:
+            self._json(
+                200,
+                {
+                    "choices": [
+                        {
+                            "message": {
+                                "role": "assistant",
+                                "content": None,
+                                "tool_calls": [
+                                    {
+                                        "id": "call_python_assigned_tool_smuggled",
+                                        "type": "function",
+                                        "function": {
+                                            "name": "python",
+                                            "arguments": json.dumps(
+                                                {
+                                                    "code": (
+                                                        "# Check available MCP servers\n"
+                                                        'mcp_skills = search_skills({"prefix": "mcp-"})\n'
+                                                        "print(mcp_skills)"
+                                                    ),
+                                                    "human_description": (
+                                                        "Listing available MCP servers and compute"
+                                                    ),
+                                                }
+                                            ),
+                                        },
+                                    }
+                                ],
+                            },
+                            "finish_reason": "tool_calls",
+                        }
+                    ],
+                    "usage": {"prompt_tokens": 4, "completion_tokens": 2},
+                },
+            )
+            return
+        if not payload.get("stream") and "kernel python native tool" in prompt:
+            self._json(
+                200,
+                {
+                    "choices": [
+                        {
+                            "message": {
+                                "role": "assistant",
+                                "content": None,
+                                "tool_calls": [
+                                    {
+                                        "id": "call_python_kernel",
+                                        "type": "function",
+                                        "function": {
+                                            "name": "python",
+                                            "arguments": json.dumps(
+                                                {
+                                                    "code": (
+                                                        "import kernel\n"
+                                                        'mcp_skills = kernel.search_skills({"prefix": "mcp-"})'
+                                                    ),
+                                                    "human_description": (
+                                                        "Searching for cancer genomics MCP skills"
+                                                    ),
+                                                }
+                                            ),
+                                        },
+                                    }
+                                ],
+                            },
+                            "finish_reason": "tool_calls",
+                        }
+                    ],
+                    "usage": {"prompt_tokens": 4, "completion_tokens": 2},
+                },
+            )
+            return
+        if not payload.get("stream") and "host skills python native tool" in prompt:
+            self._json(
+                200,
+                {
+                    "choices": [
+                        {
+                            "message": {
+                                "role": "assistant",
+                                "content": None,
+                                "tool_calls": [
+                                    {
+                                        "id": "call_python_host_skills",
+                                        "type": "function",
+                                        "function": {
+                                            "name": "python",
+                                            "arguments": json.dumps(
+                                                {
+                                                    "code": (
+                                                        "mcp = host.skills.list()\n"
+                                                        "print([s.get('name') for s in mcp])"
+                                                    ),
+                                                    "human_description": (
+                                                        "Searching for cancer-related MCP servers"
+                                                    ),
+                                                }
+                                            ),
+                                        },
+                                    }
+                                ],
+                            },
+                            "finish_reason": "tool_calls",
+                        }
+                    ],
+                    "usage": {"prompt_tokens": 4, "completion_tokens": 2},
+                },
+            )
+            return
         if not payload.get("stream") and "valid python native tool" in prompt:
             self._json(
                 200,
@@ -829,6 +969,31 @@ class FakeOpenAIHandler(BaseHTTPRequestHandler):
                             "message": {
                                 "role": "assistant",
                                 "content": '<tool_call>["submit_output","{\\"verdict\\":\\"pass\\",\\"finding_count\\":0,\\"findings\\":[]}"]',
+                            },
+                            "finish_reason": "stop",
+                        }
+                    ],
+                    "usage": {"prompt_tokens": 4, "completion_tokens": 4},
+                },
+            )
+            return
+        if not payload.get("stream") and "unavailable repl text tool call" in prompt:
+            self._json(
+                200,
+                {
+                    "choices": [
+                        {
+                            "message": {
+                                "role": "assistant",
+                                "content": (
+                                    "I'll use the repl tool for skill discovery.\n\n"
+                                    "<tool_call>\n"
+                                    "<function=repl>\n"
+                                    "<parameter=human_description>Searching for cancer-related MCP servers\n"
+                                    "<parameter=code>mcp = host.skills.list()\n"
+                                    "</function>\n"
+                                    "</tool_call>"
+                                ),
                             },
                             "finish_reason": "stop",
                         }
@@ -1439,6 +1604,24 @@ def assert_invalid_python_tool_filtered(proxy_port: int, prompt: str) -> None:
     assert all(block.get("type") != "tool_use" for block in payload["content"]), payload
 
 
+def assert_unavailable_text_tool_markup_filtered(proxy_port: int) -> None:
+    raw = post_json(
+        f"http://127.0.0.1:{proxy_port}/v1/messages",
+        {
+            "model": "claude-opus-4-8",
+            "max_tokens": 64,
+            "tools": [python_tool()],
+            "messages": [{"role": "user", "content": "unavailable repl text tool call"}],
+        },
+    )
+    payload = json.loads(raw)
+    assert payload["stop_reason"] == "end_turn", payload
+    text = payload["content"][0]["text"]
+    assert "<tool_call>" not in text, payload
+    assert "host.skills" not in text, payload
+    assert "cannot call that tool from this local profile" in text, payload
+
+
 def assert_valid_python_tool_allowed(proxy_port: int) -> None:
     raw = post_json(
         f"http://127.0.0.1:{proxy_port}/v1/messages",
@@ -1571,6 +1754,20 @@ def assert_tool_allowlist(proxy_port: int) -> None:
     payload = json.loads(raw)
     upstream_seen = json.loads(payload["content"][0]["text"])
     assert upstream_seen["tool_names"] == ["search_skills"], upstream_seen
+
+
+def assert_pass_allowlist_guard(proxy_port: int) -> None:
+    raw = post_json(
+        f"http://127.0.0.1:{proxy_port}/v1/messages",
+        {
+            "model": "claude-opus-4-8",
+            "max_tokens": 64,
+            "tools": [bash_tool(), search_skills_tool()],
+            "messages": [{"role": "user", "content": "check pass allowlist guard"}],
+        },
+    )
+    payload = json.loads(raw)
+    assert payload["content"][0]["text"] == "guard present", payload
 
 
 def assert_harness_tool_allowlist_bypass(proxy_port: int) -> None:
@@ -2264,6 +2461,10 @@ def main() -> int:
         assert_invalid_python_tool_filtered(proxy_port, "path-only python native tool")
         assert_invalid_python_tool_filtered(proxy_port, "import-blob python native tool")
         assert_invalid_python_tool_filtered(proxy_port, "tool-smuggled python native tool")
+        assert_invalid_python_tool_filtered(proxy_port, "assigned tool-smuggled python native tool")
+        assert_invalid_python_tool_filtered(proxy_port, "kernel python native tool")
+        assert_invalid_python_tool_filtered(proxy_port, "host skills python native tool")
+        assert_unavailable_text_tool_markup_filtered(proxy_port)
         assert_valid_python_tool_allowed(proxy_port)
         assert_metadata_tool_repaired(proxy_port)
         assert_submit_output_bullets_repaired(proxy_port)
@@ -2387,6 +2588,7 @@ def main() -> int:
     try:
         wait_for_proxy(allowlist_proxy_port, allowlist_proc)
         assert_tool_allowlist(allowlist_proxy_port)
+        assert_pass_allowlist_guard(allowlist_proxy_port)
         assert_harness_tool_allowlist_bypass(allowlist_proxy_port)
     finally:
         allowlist_proc.terminate()

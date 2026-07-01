@@ -341,7 +341,14 @@ Expected:
   shapes such as `code: "openrouter_free_probe.py"` and giant single-line
   import blobs while preserving normal multi-line analysis scripts. It also
   filters Claude Science app-tool invocations smuggled inside Python source,
-  such as `skill({"skill": "figure-style"})`.
+  such as `skill({"skill": "figure-style"})`,
+  `mcp_skills = search_skills({"prefix": "mcp-"})`, `import kernel`, and
+  `host.skills.list()`.
+- When a pass-through profile hides some offered Claude Science tools with an
+  allowlist, the proxy adds a system note telling the local model which tools
+  are actually visible and not to call hidden tools through Python, host/kernel
+  APIs, or raw tool-call markup. Invalid text-tool-call markup for hidden tools
+  should be filtered rather than displayed in the UI.
 - Reviewer status may still be model-specific. If it is inconclusive, inspect
   the reviewer message shape and add a narrow adapter plus a regression test.
   Observed Qwen reviewer shapes include markdown-wrapped function text, fenced

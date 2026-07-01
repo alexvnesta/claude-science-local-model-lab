@@ -67,11 +67,18 @@ Observed Qwen behavior:
 
 - It can produce valid `python` and `save_artifacts` calls when the foreground
   tool surface is narrow and explicitly requested.
+- The execution profile is intentionally not a general discovery profile. If a
+  research-planning prompt needs `search_skills`, `skill`, browser, or other
+  non-execution tools, use the tool-probe profile or the direct-analysis
+  profile instead of the execution profile.
 - It may split a requested artifact workflow across several Python calls even
   when asked to do it in one call.
 - It may try to call Claude Science tools inside Python source, for example
-  `skill({"skill":"figure-style"})`; the execution profile now filters that
-  shape before local execution.
+  `skill({"skill":"figure-style"})`, assigned calls such as
+  `mcp_skills = search_skills(...)`, or unavailable host/kernel APIs such as
+  `import kernel` and `host.skills.list()`. The proxy filters those shapes
+  before local execution and adds an allowlist guard when pass-through profiles
+  hide offered app tools.
 - Reviewer frames should not inherit the foreground allowlist. The execution
   profile uses `PROXY_HARNESS_TOOL_ALLOWLIST` so reviewers can inspect artifacts
   with `repl` and `read_file`.

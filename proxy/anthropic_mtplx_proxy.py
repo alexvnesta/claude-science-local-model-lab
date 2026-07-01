@@ -573,6 +573,12 @@ def assistant_message_from_blocks(message: dict[str, Any]) -> dict[str, Any]:
 def anthropic_to_openai(payload: dict[str, Any], stream: bool = False) -> dict[str, Any]:
     messages: list[dict[str, Any]] = []
     payload_tool_names = tool_names(payload)
+    allowlist = effective_tool_allowlist(payload)
+    forwarded_payload_tool_names = [
+        name
+        for name in payload_tool_names
+        if allowlist is None or name in allowlist
+    ]
 
     system = payload.get("system")
     system_text = block_text(system)
@@ -591,6 +597,28 @@ def anthropic_to_openai(payload: dict[str, Any], stream: bool = False) -> dict[s
                     "or artifacts, say this local profile cannot execute those tools and provide only a "
                     "short direct draft, plan, or caveated analysis based on the visible prompt. "
                     "Keep the answer under 220 words so it can finish in one response."
+                ),
+            }
+        )
+    if (
+        CONFIG.tool_mode == "pass"
+        and allowlist is not None
+        and payload_tool_names
+        and set(forwarded_payload_tool_names) != set(payload_tool_names)
+    ):
+        visible = ", ".join(forwarded_payload_tool_names) or "none"
+        messages.append(
+            {
+                "role": "system",
+                "content": (
+                    "Local proxy note: this profile forwards only these Claude Science "
+                    f"tools upstream: {visible}. Other app tools are intentionally hidden "
+                    "from the local model for this run. Use only the visible tools as real "
+                    "tool calls. Do not invoke hidden Claude Science tools inside Python, "
+                    "through host/kernel APIs, or via raw tool-call markup. If the task "
+                    "needs a hidden discovery, browser, file, or reviewer tool, answer from "
+                    "the visible prompt or say this run should be retried with a profile "
+                    "that exposes that tool."
                 ),
             }
         )
@@ -619,7 +647,6 @@ def anthropic_to_openai(payload: dict[str, Any], stream: bool = False) -> dict[s
             )
 
     tools = []
-    allowlist = effective_tool_allowlist(payload)
     for tool in payload.get("tools") or []:
         if not isinstance(tool, dict):
             continue
@@ -1137,14 +1164,22 @@ def validate_python_arguments(name: str, arguments: dict[str, Any]) -> str | Non
         return "single-line import blob is likely a malformed tool call"
 
     tool_like_call = re.search(
-        r"(?m)^\s*"
+        r"(?m)(?:^|[^\w.])"
         r"(?:skill|search_skills|save_artifacts|read_file|web_search|repl|"
         r"summary_query|query_target_history|boundary|update_step_status)"
-        r"\s*\(\s*(?:\{|human_description\s*=)",
+        r"\s*\(",
         stripped,
     )
     if tool_like_call:
         return "Claude Science tool call was placed inside python code"
+
+    unavailable_runtime_api = re.search(
+        r"(?m)^\s*(?:import\s+kernel\b|from\s+kernel\s+import\b)|"
+        r"\b(?:kernel\.|host\.skills\b)",
+        stripped,
+    )
+    if unavailable_runtime_api:
+        return "Claude Science host/kernel API was placed inside python code"
 
     return None
 
@@ -1221,6 +1256,19 @@ def parse_json_object_text(text: str) -> dict[str, Any] | None:
     return parsed if isinstance(parsed, dict) else None
 
 
+def contains_raw_tool_call_markup(text: str) -> bool:
+    lowered = text.lower()
+    return any(
+        marker in lowered
+        for marker in (
+            "<tool_call",
+            "<function=",
+            "<parameter=",
+            "<anonymous_function",
+        )
+    )
+
+
 def clean_model_text(text: str) -> str:
     cleaned = text.strip()
     if CONFIG.strip_thinking_text:
@@ -1237,6 +1285,14 @@ def clean_model_text(text: str) -> str:
             cleaned = cleaned[len(open_tag) :].lstrip()
         if cleaned.endswith(close_tag):
             cleaned = cleaned[: -len(close_tag)].rstrip()
+    if contains_raw_tool_call_markup(cleaned):
+        METRICS.record_tool_filter(reason="text_tool_markup")
+        log("filtering unvalidated text tool-call markup")
+        return (
+            "I cannot call that tool from this local profile. I can answer from "
+            "the visible prompt, or this run can be retried with a profile that "
+            "exposes the needed tool."
+        )
     return cleaned
 
 
