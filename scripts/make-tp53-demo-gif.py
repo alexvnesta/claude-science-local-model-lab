@@ -30,6 +30,8 @@ def font(size: int, bold: bool = False) -> ImageFont.FreeTypeFont | ImageFont.Im
 FONT_TITLE = font(24, bold=True)
 FONT_BODY = font(15)
 FONT_TAG = font(14, bold=True)
+FONT_BIG = font(34, bold=True)
+FONT_PATH = font(18)
 
 
 def load_frame(path: Path) -> Image.Image:
@@ -77,14 +79,61 @@ def draw_callout(
 
 def make_contact(frames: list[Image.Image], output: Path) -> None:
     thumbs = [frame.convert("RGB").resize((320, 180), Image.Resampling.LANCZOS) for frame in frames]
-    sheet = Image.new("RGB", (640, 540), (22, 22, 22))
+    cols = 2
+    rows = (len(thumbs) + cols - 1) // cols
+    sheet = Image.new("RGB", (cols * 320, rows * 180), (22, 22, 22))
     draw = ImageDraw.Draw(sheet)
     for i, thumb in enumerate(thumbs):
-        x = (i % 2) * 320
-        y = (i // 2) * 180
+        x = (i % cols) * 320
+        y = (i // cols) * 180
         sheet.paste(thumb, (x, y))
         draw.text((x + 8, y + 8), f"frame {i + 1}", fill=(255, 255, 255), font=FONT_TAG)
     sheet.save(output)
+
+
+def draw_source_frame() -> Image.Image:
+    canvas = Image.new("RGB", OUT_SIZE, (18, 22, 27))
+    draw = ImageDraw.Draw(canvas)
+
+    screenshot_path = Path("docs/assets/tp53-notebook-source-1.png")
+    if not screenshot_path.exists():
+        raise SystemExit(f"Missing source screenshot: {screenshot_path}")
+
+    source = Image.open(screenshot_path).convert("RGB")
+    source_crop = source.crop((0, 0, source.width, min(source.height, 1040)))
+    source_crop.thumbnail((565, 455), Image.Resampling.LANCZOS)
+    source_x = 360
+    source_y = 48
+    draw.rounded_rectangle(
+        (source_x - 10, source_y - 10, source_x + source_crop.width + 10, source_y + source_crop.height + 10),
+        radius=12,
+        fill=(255, 255, 255),
+        outline=(100, 210, 255),
+        width=4,
+    )
+    canvas.paste(source_crop, (source_x, source_y))
+
+    draw.text((32, 62), "Source code", fill=(255, 255, 255), font=FONT_BIG)
+    draw.text((32, 104), "available", fill=(255, 255, 255), font=FONT_BIG)
+
+    body = (
+        "The TP53 demo has a public Python notebook plus source screenshots "
+        "checked into GitHub."
+    )
+    y = 172
+    for line in textwrap.wrap(body, width=34):
+        draw.text((34, y), line, fill=(218, 229, 236), font=FONT_BODY)
+        y += 23
+
+    draw.rounded_rectangle((32, 304, 318, 382), radius=10, fill=(5, 12, 18), outline=(100, 210, 255), width=2)
+    draw.text((48, 323), "examples/", fill=(165, 205, 232), font=FONT_PATH)
+    draw.text((48, 350), "tp53_brca_xena_analysis.ipynb", fill=(255, 255, 255), font=FONT_PATH)
+
+    draw.rounded_rectangle((32, 414, 318, 492), radius=10, fill=(45, 70, 53), outline=(130, 210, 155), width=2)
+    draw.text((48, 433), "Reproduce or inspect", fill=(245, 255, 248), font=FONT_PATH)
+    draw.text((48, 460), "the analysis source", fill=(245, 255, 248), font=FONT_PATH)
+
+    return canvas.convert("P", palette=Image.Palette.ADAPTIVE, colors=128)
 
 
 def build(capture_dir: Path, output: Path, contact: Path | None) -> None:
@@ -133,13 +182,14 @@ def build(capture_dir: Path, output: Path, contact: Path | None) -> None:
         if not path.exists():
             raise SystemExit(f"Missing capture frame: {path}")
         frames.append(draw_callout(load_frame(path), title=title, body=body, boxes=boxes))
+    frames.append(draw_source_frame())
 
     output.parent.mkdir(parents=True, exist_ok=True)
     frames[0].save(
         output,
         save_all=True,
         append_images=frames[1:],
-        duration=[1800, 1800, 1900, 2200, 2200, 3000],
+        duration=[1800, 1800, 1900, 2200, 2200, 3000, 3200],
         loop=0,
         optimize=True,
         disposal=2,
