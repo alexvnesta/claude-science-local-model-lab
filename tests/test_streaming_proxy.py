@@ -1206,6 +1206,7 @@ def assert_models_endpoint(proxy_port: int) -> None:
     payload = get_json(f"http://127.0.0.1:{proxy_port}/v1/models?limit=1000")
     ids = [item["id"] for item in payload["data"]]
     assert ids == ["claude-opus-4-8", "fake-model"], payload
+    assert payload["data"][0]["display_name"] == "Claude Opus 4.8", payload
     assert payload["has_more"] is False, payload
     assert payload["first_id"] == "claude-opus-4-8", payload
     assert payload["last_id"] == "fake-model", payload
@@ -1213,6 +1214,17 @@ def assert_models_endpoint(proxy_port: int) -> None:
     model = get_json(f"http://127.0.0.1:{proxy_port}/v1/models/claude-opus-4-8")
     assert model["id"] == "claude-opus-4-8", model
     assert model["type"] == "model", model
+    assert model["display_name"] == "Claude Opus 4.8", model
+
+
+def assert_custom_model_display_names(proxy_port: int) -> None:
+    payload = get_json(f"http://127.0.0.1:{proxy_port}/v1/models?limit=1000")
+    names = {item["id"]: item["display_name"] for item in payload["data"]}
+    assert names["claude-opus-4-8"] == "MTPLX Qwen 27B Local", payload
+    assert names["fake-model"] == "Fake Model Direct", payload
+
+    model = get_json(f"http://127.0.0.1:{proxy_port}/v1/models/claude-opus-4-8")
+    assert model["display_name"] == "MTPLX Qwen 27B Local", model
 
 
 def start_proxy_process(
@@ -1302,6 +1314,26 @@ def main() -> int:
             proc.wait(timeout=5)
         except subprocess.TimeoutExpired:
             proc.kill()
+
+    display_proxy_port = free_port()
+    display_proc = start_proxy_process(
+        fake_port,
+        display_proxy_port,
+        "drop",
+        [
+            "--model-display-names",
+            '{"claude-opus-4-8":"MTPLX Qwen 27B Local","fake-model":"Fake Model Direct"}',
+        ],
+    )
+    try:
+        wait_for_proxy(display_proxy_port, display_proc)
+        assert_custom_model_display_names(display_proxy_port)
+    finally:
+        display_proc.terminate()
+        try:
+            display_proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            display_proc.kill()
 
     pass_proxy_port = free_port()
     pass_proc = start_proxy_process(fake_port, pass_proxy_port, "pass")

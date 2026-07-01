@@ -8,7 +8,7 @@ flowchart LR
   official["Official Claude Science\n127.0.0.1:8765\nOpus path"]:::official
   copy["Copied Claude Science\n127.0.0.1:18765\nisolated _local/data"]:::local
   proxy["Anthropic-compatible proxy\n127.0.0.1:18080"]:::local
-  backend["OpenAI-compatible backend\nMTPLX/Ollama/vLLM/LM Studio"]:::backend
+  backend["OpenAI-compatible backend\nMTPLX/Ollama/OpenRouter/vLLM/LM Studio"]:::backend
 
   official --> cloud["Anthropic cloud"]
   copy -->|ANTHROPIC_BASE_URL| proxy
@@ -68,6 +68,10 @@ Useful profile dimensions:
 
 - Model ID and base URL.
 - Advertised Claude alias, usually `claude-opus-4-8`, plus the real local model.
+- Display-name mapping: `PROXY_MODEL_DISPLAY_NAMES` controls the labels returned
+  by `/v1/models`. Claude Science's `/api/models` route filters non-`claude-`
+  IDs and slug-like lowercase display names, so the reliable local pattern is a
+  Claude-shaped alias ID plus a human label such as `MTPLX Qwen 27B Local`.
 - Request timeout.
 - `max_tokens` cap.
 - Stream mode: `direct` for true upstream SSE bridging or `buffered` for local

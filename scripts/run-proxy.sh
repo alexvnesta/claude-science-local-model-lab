@@ -25,6 +25,7 @@ export PROXY_SCHEMA_LOG_PATH="${PROXY_SCHEMA_LOG_PATH:-}"
 export PROXY_HARNESS_TOOLS="${PROXY_HARNESS_TOOLS:-submit_output}"
 export PROXY_CLAUDE_SCIENCE_COMPAT="${PROXY_CLAUDE_SCIENCE_COMPAT:-0}"
 export PROXY_ADVERTISED_MODELS="${PROXY_ADVERTISED_MODELS:-claude-opus-4-8,$MTPLX_OPENAI_MODEL}"
+export PROXY_MODEL_DISPLAY_NAMES="${PROXY_MODEL_DISPLAY_NAMES:-}"
 
 exec python3 "$ROOT/proxy/anthropic_mtplx_proxy.py" \
   --host "$PROXY_HOST" \
@@ -45,4 +46,5 @@ exec python3 "$ROOT/proxy/anthropic_mtplx_proxy.py" \
   --schema-log-path "$PROXY_SCHEMA_LOG_PATH" \
   --harness-tools "$PROXY_HARNESS_TOOLS" \
   --claude-science-compat "$PROXY_CLAUDE_SCIENCE_COMPAT" \
-  --advertised-models "$PROXY_ADVERTISED_MODELS"
+  --advertised-models "$PROXY_ADVERTISED_MODELS" \
+  --model-display-names "$PROXY_MODEL_DISPLAY_NAMES"

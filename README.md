@@ -9,9 +9,50 @@ does not include Claude Science itself, Anthropic proprietary files, account
 state, local runtime data, logs, prompts, tool outputs, or artifacts.
 
 The first working proof used MTPLX/Qwen, but the proxy is intentionally model
-agnostic: MTPLX, Ollama, LM Studio, vLLM, llama.cpp server, or any similar
-OpenAI-compatible `/v1/chat/completions` endpoint can be configured with a
-profile file.
+agnostic: MTPLX, Ollama, OpenRouter, LM Studio, vLLM, llama.cpp server, or any
+similar OpenAI-compatible `/v1/chat/completions` endpoint can be configured
+with a profile file.
+
+## Why This Proxy Fits Claude Science
+
+Most existing Anthropic-compatible local proxies target Claude Code-style chat
+traffic. This proxy is narrower and more opinionated: it adapts the request
+patterns Claude Science actually emits.
+
+- Claude Science surface: implements `/v1/models`, `/v1/models/{id}`,
+  `/v1/messages`, and `/v1/messages/count_tokens`, including the
+  `/v1/models?limit=1000` shape observed from the app.
+- Multi-frame request brokering: classifies app traffic as `plain`,
+  `tools_hidden`, `tool_agent`, or `harness` because Claude Science creates
+  foreground agent frames and reviewer/child frames that all share the same
+  model endpoint.
+- Reviewer/harness support: treats structural tools such as `submit_output`
+  separately from user tools like `python`, `bash`, or `search_skills`, so
+  reviewer frames can complete even when the foreground agent tool allowlist is
+  intentionally small.
+- Claude Science tool translation: converts Anthropic `tool_use` and
+  `tool_result` blocks to OpenAI-compatible tool messages, converts OpenAI
+  `tool_calls` back to Anthropic `tool_use`, and emits Claude Science-compatible
+  `toolu_...` IDs plus `caller: {"type": "direct"}` when needed.
+- Local-model text adapters: repairs narrow Qwen-style pseudo-tool-call text
+  seen in reviewer traffic, including `<tool_call>[...]`,
+  `::submit_output::+json::...`, fenced JSON, OpenAI-style function JSON,
+  `submit_output(...)`, markdown-wrapped function calls, and XML-ish function
+  blocks.
+- Tool safety boundary: validates returned tool calls against the exact schema
+  Claude Science offered on that request, with only narrow metadata repair for
+  fields such as `human_description`.
+- Local-model ergonomics: caps Claude Science's very large `max_tokens`
+  requests, retries transient MTPLX `session_busy` responses, supports direct or
+  buffered SSE, strips known wrapper tags, and can hide tool schemas with an
+  honesty guard for direct-analysis runs.
+- App-facing model presentation: can advertise Claude-shaped aliases with
+  human display names so the Claude Science model picker shows a local model
+  instead of an unavailable cloud-looking slug.
+
+The result is not the broadest general-purpose gateway. It is a small,
+dependency-light Claude Science adapter with regression tests for the app
+shapes and local-model failure modes we have observed.
 
 ## Safety Boundary
 
@@ -36,6 +77,17 @@ uses `_local/Claude Science.app/Contents/Resources/bin/claude-science`. When
 checking client updates, verify the managed binary and the copied app binary,
 not just `/Applications/Claude Science.app/Contents/Info.plist`.
 
+## Access Requirements
+
+This lab assumes you already have official Claude Science beta access. Verified
+against Anthropic docs on 2026-07-01: Claude Science is in beta; Pro and Max
+users have app access on by default; Team and Enterprise organizations must
+enable it in Organization settings; Free users do not have access; and entitled
+users download the app and sign in with their `claude.ai` account.
+
+This proxy does not bypass that access or login requirement. See
+`docs/access.md` for the official links and practical implications.
+
 ## Quick Start
 
 Copy the installed app into the ignored lab directory:
@@ -49,6 +101,19 @@ Start the proxy in the background with the MTPLX/Qwen profile:
 
 ```bash
 PROXY_PROFILE=profiles/mtplx-qwen.env.example ./scripts/start-proxy-detached.sh
+```
+
+Or start with a portable OpenAI-compatible provider:
+
+```bash
+OLLAMA_MODEL=qwen3:8b \
+PROXY_PROFILE=profiles/ollama.env.example \
+./scripts/start-proxy-detached.sh
+
+OPENROUTER_API_KEY=... \
+OPENROUTER_MODEL=provider/model-slug \
+PROXY_PROFILE=profiles/openrouter.env.example \
+./scripts/start-proxy-detached.sh
 ```
 
 For direct-analysis experiments inside Claude Science, use the Qwen analysis
@@ -108,8 +173,10 @@ and prints the accepted frame id.
 - `profiles/`: example profiles for MTPLX/Qwen and generic local backends.
 - `scripts/`: launch, status, smoke-test, and local app verification helpers.
 - `tests/`: regression tests for streaming, tool-call filtering, and adapters.
-- `docs/`: architecture notes, verification checklist, and prior-art review.
+- `docs/`: access notes, architecture, provider setup, verification checklist,
+  roadmap, comparison notes, and prior-art review.
 - `_local/`: ignored local-only app/runtime/log/cookie/artifact area.
+- `AGENTS.md`: orientation for humans or agents cloning the repo.
 
 ## Prior Art And Credit
 
@@ -118,15 +185,31 @@ token-proxy projects named in the search overview and in our initial notes.
 See `NOTICE.md` and `docs/prior-art-review.md` for links, licenses, reviewed
 commits, and how this Claude Science-specific adapter differs.
 
+For a shorter positioning summary, see `docs/why-this-proxy.md`. The claim is
+not that this is the best universal Claude Code gateway; it is that this repo is
+better suited to the Claude Science local-app path, especially reviewer/harness
+traffic, than generic Claude Code proxies.
+
+For current limitations and cleanup direction, see `docs/roadmap.md`.
+
 ## Model Profiles
 
 Profiles are shell env files loaded before the proxy starts. The important
 settings are:
 
-- `MTPLX_OPENAI_BASE_URL`: upstream OpenAI-compatible base URL.
+- `MTPLX_OPENAI_BASE_URL`: upstream OpenAI-compatible base URL. This legacy
+  name can point at MTPLX, Ollama, OpenRouter, vLLM, LM Studio, llama.cpp
+  server, or another compatible provider.
 - `MTPLX_OPENAI_MODEL`: upstream model ID to send to `/v1/chat/completions`.
+- `MTPLX_API_KEY`: upstream bearer token. Local servers such as Ollama often
+  ignore it; OpenRouter requires it.
 - `PROXY_ADVERTISED_MODELS`: model IDs exposed to Claude Science through
   `/v1/models`.
+- `PROXY_MODEL_DISPLAY_NAMES`: optional JSON object or comma-separated
+  `model=Display Name` map for `/v1/models` display names. Claude Science's
+  `/api/models` route filters non-`claude-` IDs and slug-like lowercase display
+  names, so a Claude-shaped alias such as `claude-opus-4-8` should advertise a
+  human label such as `MTPLX Qwen 27B Local`.
 - `PROXY_MAX_TOKENS_CAP`: local cap applied to Claude Science's very large
   `max_tokens` requests.
 - `PROXY_UPSTREAM_RETRIES` and `PROXY_UPSTREAM_RETRY_DELAY`: retries for
@@ -161,7 +244,9 @@ settings are:
 
 The MTPLX proof profile is in `profiles/mtplx-qwen.env.example`. A generic
 profile for Ollama/Gemma/vLLM/LM Studio is in
-`profiles/openai-compatible.env.example`.
+`profiles/openai-compatible.env.example`. Provider-specific starting points are
+in `profiles/ollama.env.example` and `profiles/openrouter.env.example`; see
+`docs/providers.md`.
 
 ## Current Status
 
@@ -239,8 +324,10 @@ Known limitations:
   background-review traffic in mind.
 - Long follow-up chains grow expensive quickly. Prefer fresh sessions for clean
   verification and benchmark runs.
-- Some UI metadata can still say the Claude alias is unavailable even while
-  request routing is local.
+- Model-picker labels are now proxy-controlled. The isolated app's
+  `/api/models` endpoint returns `claude-opus-4-8` as `MTPLX Qwen 27B Local`,
+  and browser verification showed the composer selector rendering that label
+  without `(unavailable)`.
 
 See `docs/verification-checklist.md` for the exact proof checklist and
 `docs/github-post.md` for a publishable write-up draft.

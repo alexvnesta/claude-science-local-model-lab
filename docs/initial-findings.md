@@ -85,9 +85,13 @@ Evidence:
 
 Known rough edges:
 
-- The UI still displays `Model: claude-opus-4-8 (unavailable)`, even though
-  the request path is local and `/v1/models` advertises that alias. This is
-  likely model metadata / UI state rather than a routing failure.
+- The earlier `Model: claude-opus-4-8 (unavailable)` UI state was caused by
+  Claude Science's `/api/models` filter, not by failed local routing. The app
+  keeps model IDs that start with `claude-`, but filters slug-like lowercase
+  display names. The proxy now supports `PROXY_MODEL_DISPLAY_NAMES`, so the
+  compatibility alias can stay `claude-opus-4-8` while the UI sees a human name
+  such as `MTPLX Qwen 27B Local`. Browser verification showed the composer
+  selector rendering `MTPLX Qwen 27B Local` without `(unavailable)`.
 - Claude Science requests very large `max_tokens` values. The proxy now caps
   upstream `max_tokens` with `PROXY_MAX_TOKENS_CAP` to keep local runs sane.
 - The proxy supports true stream bridging in tests, including text deltas and

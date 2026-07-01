@@ -15,6 +15,18 @@ to our local proxy, the proxy translated those requests to an OpenAI-compatible
 MTPLX/Qwen backend, and Claude Science rendered the local model response in the
 UI.
 
+## Access Caveat
+
+This is not a Claude Science access bypass. Anthropic's docs currently describe
+Claude Science as beta software: Pro and Max have access on by default; Team
+and Enterprise organizations need an Owner or Primary Owner to enable Claude
+Science in Organization settings; Free users do not have access; and entitled
+users download the app and sign in with their `claude.ai` account.
+
+So the real setup friction starts before the proxy: you need official beta
+access, the installed app, and an initial Claude account login. This repo keeps
+that boundary intact and does not redistribute the app or account state.
+
 ## Setup
 
 - Official Claude Science remained untouched on `127.0.0.1:8765`.
@@ -22,6 +34,9 @@ UI.
 - Local proxy ran on `127.0.0.1:18080`.
 - MTPLX exposed an OpenAI-compatible endpoint at `127.0.0.1:8030/v1`.
 - The first proof used `mtplx-qwen36-27b-optimized-quality`.
+- Portable profiles are included for Ollama and OpenRouter, plus a generic
+  OpenAI-compatible profile for vLLM, LM Studio, llama.cpp server, and similar
+  backends.
 
 ## Why a Proxy
 
@@ -75,12 +90,13 @@ expose OpenAI-compatible chat completions. The proxy does the translation:
 - Local backends may serialize concurrent requests. MTPLX can return
   `session_busy` when Claude Science sends foreground and background-review
   calls at the same time, so the proxy includes configurable retries.
-- UI metadata may still show a Claude alias as unavailable even when the request
-  path is local.
+- The model picker needs a Claude-shaped compatibility ID plus a human display
+  name. Claude Science filters non-`claude-` IDs and slug-like display names
+  from `/api/models`, so set `PROXY_MODEL_DISPLAY_NAMES` for local backends.
 
 ## How to Try Another Model
 
-Create a profile:
+Use a provider profile:
 
 ```bash
 cp profiles/openai-compatible.env.example profiles/local.env
@@ -92,6 +108,7 @@ Edit:
 MTPLX_OPENAI_BASE_URL=http://127.0.0.1:11434/v1
 MTPLX_OPENAI_MODEL=gemma-or-qwen-or-your-model
 PROXY_ADVERTISED_MODELS=claude-opus-4-8,gemma-or-qwen-or-your-model
+PROXY_MODEL_DISPLAY_NAMES='{"claude-opus-4-8":"Gemma Local"}'
 PROXY_MAX_TOKENS_CAP=4096
 PROXY_STREAM_MODE=direct
 PROXY_TOOL_MODE=pass
@@ -102,6 +119,23 @@ PROXY_HARNESS_TOOLS=submit_output
 PROXY_PARSE_TEXT_TOOL_CALLS=0
 # Optional diagnostics only:
 # PROXY_SCHEMA_LOG_PATH=_local/tool-schema-capture.jsonl
+```
+
+For Ollama:
+
+```bash
+OLLAMA_MODEL=qwen3:8b \
+PROXY_PROFILE=profiles/ollama.env.example \
+./scripts/start-proxy-detached.sh
+```
+
+For OpenRouter:
+
+```bash
+OPENROUTER_API_KEY=... \
+OPENROUTER_MODEL=provider/model-slug \
+PROXY_PROFILE=profiles/openrouter.env.example \
+./scripts/start-proxy-detached.sh
 ```
 
 For local Qwen-style models, start with the focused probe profile:

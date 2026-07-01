@@ -2,6 +2,25 @@
 
 Use this checklist before publishing a run result or changing the proxy.
 
+## 0. Confirm Access
+
+Before debugging the proxy, confirm the user has official Claude Science beta
+access and can sign in to the installed app. Verified Anthropic docs currently
+say Claude Science is beta; Pro and Max have app access on by default; Team and
+Enterprise organizations must enable it in Organization settings; Free users do
+not have access; and entitled members download the app and sign in with their
+`claude.ai` account.
+
+See `docs/access.md` for source links and notes.
+
+Expected:
+
+- Claude Science is installed locally by the user.
+- The user can launch the official app and sign in normally.
+- On Team or Enterprise, organization capability enablement and role
+  entitlement have been checked.
+- No copied app bundle, account state, logs, or runtime data are committed.
+
 ## 1. Confirm Separation
 
 ```bash

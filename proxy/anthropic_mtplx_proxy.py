@@ -61,6 +61,7 @@ DEFAULT_ADVERTISED_MODELS = _env(
     "PROXY_ADVERTISED_MODELS",
     f"claude-opus-4-8,{DEFAULT_UPSTREAM_MODEL}",
 )
+DEFAULT_MODEL_DISPLAY_NAMES = _env("PROXY_MODEL_DISPLAY_NAMES", "")
 
 
 class ProxyConfig:
@@ -83,6 +84,7 @@ class ProxyConfig:
         harness_tools: list[str],
         claude_science_compat: bool,
         advertised_models: list[str],
+        model_display_names: dict[str, str],
     ) -> None:
         self.upstream_base = upstream_base.rstrip("/")
         self.upstream_model = upstream_model
@@ -101,6 +103,7 @@ class ProxyConfig:
         self.harness_tools = harness_tools
         self.claude_science_compat = claude_science_compat
         self.advertised_models = advertised_models
+        self.model_display_names = model_display_names
 
 
 CONFIG = ProxyConfig(
@@ -121,6 +124,7 @@ CONFIG = ProxyConfig(
     [],
     False,
     [],
+    {},
 )
 
 
@@ -133,6 +137,33 @@ def parse_csv(value: str) -> list[str]:
             seen.add(item)
             items.append(item)
     return items
+
+
+def parse_model_display_names(value: str) -> dict[str, str]:
+    raw = value.strip()
+    if not raw:
+        return {}
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        parsed = None
+    if isinstance(parsed, dict):
+        return {
+            str(key).strip(): str(display).strip()
+            for key, display in parsed.items()
+            if str(key).strip() and str(display).strip()
+        }
+
+    result: dict[str, str] = {}
+    for item in raw.split(","):
+        if "=" not in item:
+            continue
+        key, display = item.split("=", 1)
+        key = key.strip()
+        display = display.strip()
+        if key and display:
+            result[key] = display
+    return result
 
 
 def parse_stream_mode(value: str) -> str:
@@ -181,17 +212,43 @@ CONFIG.parse_text_tool_calls = parse_bool(DEFAULT_PARSE_TEXT_TOOL_CALLS)
 CONFIG.schema_log_path = DEFAULT_SCHEMA_LOG_PATH
 CONFIG.harness_tools = parse_csv(DEFAULT_HARNESS_TOOLS)
 CONFIG.claude_science_compat = parse_bool(DEFAULT_CLAUDE_SCIENCE_COMPAT)
+CONFIG.model_display_names = parse_model_display_names(DEFAULT_MODEL_DISPLAY_NAMES)
 
 
 def log(message: str) -> None:
     print(f"[anthropic-mtplx-proxy] {message}", file=sys.stderr, flush=True)
 
 
+def pretty_model_name(model: str) -> str:
+    display = CONFIG.model_display_names.get(model)
+    if display:
+        return display
+    known = {
+        "claude-opus-4-8": "Claude Opus 4.8",
+        "claude-opus-4-7": "Claude Opus 4.7",
+        "claude-opus-4-6": "Claude Opus 4.6",
+        "claude-sonnet-4-6": "Claude Sonnet 4.6",
+        "claude-haiku-4-5-20251001": "Claude Haiku 4.5",
+    }
+    if model in known:
+        return known[model]
+    if model.startswith("claude-"):
+        parts = model.removeprefix("claude-").split("-")
+        if parts and re.fullmatch(r"20\d{6}", parts[-1] or ""):
+            parts = parts[:-1]
+        family = parts[0].capitalize() if parts else "Model"
+        version = ".".join(parts[1:]) if len(parts) > 1 else ""
+        return f"Claude {family}{(' ' + version) if version else ''}"
+    if "qwen" in model.lower():
+        return "MTPLX Qwen Local"
+    return model
+
+
 def advertised_model_record(model: str) -> dict[str, Any]:
     return {
         "id": model,
         "type": "model",
-        "display_name": model,
+        "display_name": pretty_model_name(model),
         "created_at": "2026-06-30T00:00:00Z",
     }
 
@@ -1553,6 +1610,7 @@ class Handler(BaseHTTPRequestHandler):
                     "schema_log_path": CONFIG.schema_log_path,
                     "harness_tools": CONFIG.harness_tools,
                     "claude_science_compat": CONFIG.claude_science_compat,
+                    "model_display_names": CONFIG.model_display_names,
                 },
             )
             return
@@ -1734,6 +1792,14 @@ def main() -> int:
         default=",".join(CONFIG.advertised_models),
         help="Comma-separated model ids to expose via /v1/models.",
     )
+    parser.add_argument(
+        "--model-display-names",
+        default=DEFAULT_MODEL_DISPLAY_NAMES,
+        help=(
+            "Optional model display names, as a JSON object or comma-separated "
+            "model=Display pairs. Claude Science filters slug-like display names."
+        ),
+    )
     args = parser.parse_args()
 
     CONFIG.upstream_base = args.upstream_base.rstrip("/")
@@ -1755,6 +1821,7 @@ def main() -> int:
     CONFIG.advertised_models = parse_csv(args.advertised_models)
     if CONFIG.upstream_model not in CONFIG.advertised_models:
         CONFIG.advertised_models.append(CONFIG.upstream_model)
+    CONFIG.model_display_names = parse_model_display_names(args.model_display_names)
 
     server = ProxyServer((args.host, args.port), Handler)
     log(
@@ -1772,7 +1839,8 @@ def main() -> int:
         f"schema_log_path={CONFIG.schema_log_path or '<disabled>'}; "
         f"harness_tools={CONFIG.harness_tools}; "
         f"claude_science_compat={CONFIG.claude_science_compat}; "
-        f"advertised_models={CONFIG.advertised_models}"
+        f"advertised_models={CONFIG.advertised_models}; "
+        f"model_display_names={CONFIG.model_display_names}"
     )
     try:
         server.serve_forever()
