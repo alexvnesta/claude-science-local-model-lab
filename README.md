@@ -72,19 +72,10 @@ Prerequisites:
 
 - macOS with official Claude Science beta access and the app installed.
 - Python 3.10+ and `curl`.
-- One OpenAI-compatible upstream backend:
-  - exact demo path: an external MTPLX/Qwen server on `127.0.0.1:8030/v1`;
-  - local portable path: Ollama on `127.0.0.1:11434/v1`;
-  - remote path: OpenRouter or another OpenAI-compatible provider.
-
-Provider paths at a glance:
-
-| Path | Provider prerequisite | Start command | Caveat |
-| --- | --- | --- | --- |
-| Ollama | Ollama app or `ollama serve`, plus a pulled model | `OLLAMA_MODEL=qwen3:8b PROXY_PROFILE=profiles/ollama.env.example ./scripts/start-proxy-detached.sh` | Most reproducible public local path, but smaller local models may need prose-only mode. |
-| [MTPLX](https://github.com/youssofal/MTPLX) / Qwen | Separate companion MTPLX/Qwen stack on `127.0.0.1:8030/v1` | `PROXY_PROFILE=profiles/mtplx-qwen.env.example ./scripts/start-proxy-detached.sh` | Exact GIF path, but MTPLX/Qwen itself is not bundled here. |
-| OpenRouter | `OPENROUTER_API_KEY` and a model slug | `OPENROUTER_API_KEY=... OPENROUTER_MODEL=... PROXY_PROFILE=profiles/openrouter.env.example ./scripts/start-proxy-detached.sh` | Free routes can pass smoke tests but fail large Claude Science UI prompts with capacity errors. |
-| Generic | Any provider with `GET /v1/models` and `POST /v1/chat/completions` | Copy `profiles/openai-compatible.env.example` to `profiles/local.env` and edit it | Tool quality depends heavily on the model and provider. |
+- One OpenAI-compatible upstream backend with `GET /v1/models` and
+  `POST /v1/chat/completions`. OpenRouter is the simplest hosted example;
+  MTPLX/Qwen, Ollama, vLLM, LM Studio, and llama.cpp are covered in
+  [`docs/providers.md`](docs/providers.md).
 
 Copy your installed Claude Science app into the ignored lab area:
 
@@ -99,36 +90,7 @@ Install test dependencies:
 python3 -m pip install -r requirements-dev.txt
 ```
 
-Choose one provider profile.
-
-Most reproducible local path:
-
-```bash
-# If the Ollama app/daemon is not already running, start `ollama serve`
-# in a separate terminal first.
-ollama pull qwen3:8b
-OLLAMA_MODEL=qwen3:8b \
-PROXY_PROFILE=profiles/ollama.env.example \
-./scripts/start-proxy-detached.sh
-```
-
-Exact MTPLX/Qwen demo path:
-
-```bash
-PROXY_PROFILE=profiles/mtplx-qwen.env.example \
-./scripts/start-proxy-detached.sh
-```
-
-This assumes your companion MTPLX/Qwen setup is already serving
-`mtplx-qwen36-27b-optimized-quality` at `http://127.0.0.1:8030/v1`. MTPLX/Qwen
-itself is not bundled in this repo. If your companion stack exposes a different
-base URL or model name, copy `profiles/openai-compatible.env.example` to
-`profiles/local.env` and set those values explicitly.
-
-MTPLX install and checkpoint links are in
-[`docs/providers.md`](docs/providers.md).
-
-OpenRouter path:
+Start a hosted OpenRouter example:
 
 ```bash
 OPENROUTER_API_KEY=... \
@@ -137,7 +99,11 @@ PROXY_PROFILE=profiles/openrouter.env.example \
 ./scripts/start-proxy-detached.sh
 ```
 
-Generic OpenAI-compatible path:
+Use a paid/private-capacity route for full Claude Science UI demos when
+possible. Free OpenRouter routes are useful for smoke tests but can fail large
+Claude Science foreground prompts with upstream capacity errors.
+
+Or point at any OpenAI-compatible backend:
 
 ```bash
 cp profiles/openai-compatible.env.example profiles/local.env
@@ -165,7 +131,6 @@ Provider-only smoke tests are available without launching Claude Science:
 
 ```bash
 OPENROUTER_ENV_FILE=/path/to/ignored/.env ./scripts/smoke-openrouter.sh
-OLLAMA_MODEL=qwen3:8b ./scripts/smoke-ollama.sh
 ```
 
 Launch the isolated Claude Science copy:
@@ -183,7 +148,7 @@ For this gateway test, reply with exactly LOCAL MODEL OK. Do not use tools.
 
 If routing is local, `_local/proxy.log` will show `POST /v1/messages`.
 
-For provider-specific notes and official Ollama/OpenRouter references, see
+For MTPLX/Qwen, Ollama, and other provider-specific notes, see
 [`docs/providers.md`](docs/providers.md).
 
 ## Current Proof
