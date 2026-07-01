@@ -17,6 +17,12 @@ reviewer, and harness request shapes.
   `tool_agent`, and `harness`.
 - Separate harness-tool handling for reviewer calls such as `submit_output`, so
   reviewer structure is not lost when the foreground tool allowlist is narrow.
+- Reviewer-specific tool allowlists, so reviewer frames can inspect artifacts
+  with `repl` and `read_file` without giving the foreground agent the same
+  broad tool surface.
+- Optional reviewer closeout forcing, so local models that keep inspecting can
+  be guided back to the structural `submit_output` handshake after a bounded
+  number of inspection tool results.
 - Anthropic/OpenAI tool translation in both directions: Claude Science
   `tool_use` and `tool_result` blocks become OpenAI-compatible tool messages,
   while upstream OpenAI `tool_calls` become Claude Science-compatible
@@ -32,14 +38,19 @@ reviewer, and harness request shapes.
   request before emitting executable Anthropic `tool_use` blocks.
 - Metadata-only repair for known Claude Science/Qwen friction, without filling
   semantic fields like commands, code, paths, or artifact payloads.
+- Python sanity filtering for malformed local-model execution calls, including
+  path-only `code` fields, giant import blobs, and Claude Science app-tool calls
+  smuggled inside Python source.
 - Hidden-tool honesty guard, so profiles that hide tools ask the local model to
   answer directly rather than fake searches, file reads, code execution, or
   artifact creation.
 - Redacted tool-schema inventory logging for adapter development without
   publishing prompts, outputs, or proprietary app data.
 - Regression tests for finite Anthropic SSE close, streamed OpenAI text,
-  streamed tool-call deltas, invalid tool filtering, full-JSON fallback, and
-  observed Qwen reviewer text-tool-call formats.
+  direct-stream heartbeat comments, request ID response headers, buffered
+  validation of upstream streamed tool-call deltas, invalid tool filtering,
+  full-JSON fallback, redacted health metrics, and observed Qwen reviewer
+  text-tool-call formats.
 - Claude-shaped model aliases and display-name control so Claude Science's
   model picker can show a local backend label instead of an unavailable-looking
   cloud slug.
@@ -80,5 +91,5 @@ It intentionally does not try to be:
   fallback chains.
 
 The right future direction is to keep the Claude Science broker behavior sharp
-while gradually modularizing provider transport, streaming, and model-specific
-tool adapters.
+while gradually modularizing request-shape routing, observability, provider
+transport, streaming, and model-specific tool adapters.

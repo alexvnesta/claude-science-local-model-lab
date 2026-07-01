@@ -11,9 +11,58 @@ The preferred profile env names are:
 - `UPSTREAM_API_KEY`: upstream bearer token. Local servers often ignore it.
 - `UPSTREAM_HTTP_REFERER`: optional OpenRouter attribution URL.
 - `UPSTREAM_APP_TITLE`: optional OpenRouter app title.
+- `PROXY_PROVIDER_NAME`: non-secret provider label shown in `/healthz` and
+  proxy logs. Profiles set this to values such as `mtplx`, `ollama`, or
+  `openrouter`; otherwise the proxy infers a conservative label from the final
+  base URL.
+- `PROXY_STREAM_HEARTBEAT_SECONDS`: direct-stream idle heartbeat interval. A
+  value above zero emits SSE comments such as `: heartbeat` between upstream
+  chunks without adding model text or tool events.
 
 The older `MTPLX_OPENAI_BASE_URL`, `MTPLX_OPENAI_MODEL`, and `MTPLX_API_KEY`
 names are still supported for compatibility.
+
+## MTPLX / Local Qwen
+
+The live local proof used MTPLX's OpenAI-compatible endpoint:
+
+```text
+UPSTREAM_OPENAI_BASE_URL=http://127.0.0.1:8030/v1
+UPSTREAM_OPENAI_MODEL=mtplx-qwen36-27b-optimized-quality
+```
+
+Start with prose or narrow tool profiles before broadening tool exposure:
+
+```bash
+PROXY_PROFILE=profiles/mtplx-qwen-analysis.env.example ./scripts/start-proxy-detached.sh
+PROXY_PROFILE=profiles/mtplx-qwen-tool-probe.env.example ./scripts/start-proxy-detached.sh
+PROXY_PROFILE=profiles/mtplx-qwen-execution-probe.env.example ./scripts/start-proxy-detached.sh
+```
+
+Observed Qwen behavior:
+
+- It can produce valid `python` and `save_artifacts` calls when the foreground
+  tool surface is narrow and explicitly requested.
+- It may split a requested artifact workflow across several Python calls even
+  when asked to do it in one call.
+- It may try to call Claude Science tools inside Python source, for example
+  `skill({"skill":"figure-style"})`; the execution profile now filters that
+  shape before local execution.
+- Reviewer frames should not inherit the foreground allowlist. The execution
+  profile uses `PROXY_HARNESS_TOOL_ALLOWLIST` so reviewers can inspect artifacts
+  with `repl` and `read_file`.
+- Reviewer frames may over-inspect instead of calling `submit_output`. The
+  execution profile enables `PROXY_HARNESS_FORCE_SUBMIT_AFTER_TOOL_RESULTS=6`
+  so a long reviewer inspection loop is closed by forwarding only
+  `submit_output`.
+- Local model loops are slow. The refined Qwen artifact run took multiple
+  model turns for TSV, figure, Markdown, artifact save, final answer, and
+  reviewer inspection. Treat this as a capability proof, not yet an ergonomic
+  production default.
+- MTPLX/Qwen profiles still default to `PROXY_STREAM_MODE=buffered` because
+  that is the known-good app path for short tool loops. Direct mode now has
+  proxy-level heartbeat coverage, but it still needs fresh Claude Science
+  app-side proof before becoming the default for Qwen execution workflows.
 
 ## Ollama
 
@@ -82,10 +131,19 @@ Remote models vary widely in tool-call behavior. Start with short non-tool
 prompts, then try a narrow `PROXY_TOOL_ALLOWLIST` before exposing the full
 Claude Science tool inventory.
 
+A provider-only smoke can pass while a full Claude Science foreground UI turn
+still receives an upstream 429 from a `:free` model. Claude Science foreground
+requests include a much larger system/tool context than the smoke script, and
+free OpenRouter routes can be capacity-limited. For a public UI GIF, use MTPLX
+or a paid/private-capacity OpenRouter route unless the free route is currently
+healthy under the real app prompt.
+
 Official references:
 
 - [OpenRouter quickstart](https://openrouter.ai/docs/quickstart)
 - [OpenRouter model catalog](https://openrouter.ai/models)
+
+See also [`demo-capture.md`](demo-capture.md).
 
 ## Other OpenAI-Compatible Backends
 
@@ -100,6 +158,8 @@ Provider checklist:
 - Run `PROXY_PROFILE=... ./scripts/doctor.sh` before live app debugging.
 - Keep `PROXY_MAX_TOKENS_CAP` modest until latency is understood.
 - Use `PROXY_STREAM_MODE=direct` when upstream streaming is reliable.
+- For direct mode, set `PROXY_STREAM_HEARTBEAT_SECONDS` to a modest interval
+  such as `15` when the provider has long idle gaps between chunks.
 - Use `PROXY_STREAM_MODE=buffered` only when direct streaming breaks the app
   path; long buffered generations can starve Claude Science of events.
 - Use `PROXY_TOOL_MODE=drop` for prose-only model tests.

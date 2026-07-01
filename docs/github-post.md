@@ -57,8 +57,10 @@ expose OpenAI-compatible chat completions. The proxy does the translation:
 - Bounded biomedical-analysis prompts completed in the UI through the local
   MTPLX/Qwen path.
 - The proxy test suite covers Anthropic SSE output, OpenAI streaming text,
-  OpenAI streaming tool-call deltas, full-JSON fallback, socket close after
-  `message_stop`, and observed Qwen text-tool-call formats.
+  direct-stream heartbeat comments, request ID response headers, buffered
+  validation of upstream streamed tool-call deltas, full-JSON fallback, socket
+  close after `message_stop`, redacted health metrics, and observed Qwen
+  text-tool-call formats.
 - Claude Science foreground and reviewer frames are separate app requests. The
   proxy now logs request kind (`harness`, `tool_agent`, `tools_hidden`, or
   `plain`) and treats structural reviewer tools like `submit_output` separately
@@ -71,11 +73,25 @@ expose OpenAI-compatible chat completions. The proxy does the translation:
   loop: foreground `search_skills` tool use and tool result, then reviewer
   `submit_output` tool use and success result. This is the strongest current
   evidence that the broker can keep main-agent and reviewer traffic distinct.
+- A local Qwen 27B artifact run created TSV, Markdown, and PNG artifacts through
+  Claude Science and saved durable artifact versions. Qwen needed multiple
+  tool turns and the figure was not publication-grade, but the end-to-end
+  foreground artifact loop worked locally.
+- Reviewer routing improved after separating reviewer tools from foreground
+  tools. Qwen reviewers could inspect artifacts with `repl` and `read_file`,
+  rather than receiving only `submit_output`. A profile-level closeout guard now
+  prevents endless reviewer inspection loops by forwarding only `submit_output`
+  after several inspection tool results.
+- `/healthz` exposes shareable redacted operational metrics: request counts by
+  Claude Science request kind, stream mode counts, provider latency summaries,
+  retry/error counters, and tool-filter reason counts. It does not expose
+  prompts, tool arguments, tool results, account state, or artifacts.
 
 ## What Is Rough
 
 - Streaming is configurable. The proxy can bridge true OpenAI SSE into
-  Anthropic SSE, but MTPLX/Qwen direct streaming hung during live testing, so the
+  Anthropic SSE and can emit direct-stream idle heartbeats, but MTPLX/Qwen
+  direct streaming still lacks fresh persisted app-side tool-loop proof, so the
   MTPLX profiles currently use buffered mode.
 - Tool calls still need live workflow stress testing, but the proxy now forwards
   tools through a validation boundary: unknown tools, malformed JSON args, and
@@ -84,7 +100,12 @@ expose OpenAI-compatible chat completions. The proxy does the translation:
   formats when explicitly enabled.
 - Do not use one universal allowlist for every request shape. Reviewer/harness
   calls need `submit_output`, while foreground science-agent calls may need a
-  much smaller tool subset than the full Claude Science inventory.
+  much smaller tool subset than the full Claude Science inventory. Reviewers
+  may also need artifact inspection tools that should not automatically be
+  exposed to the foreground agent.
+- Local models can smuggle app-tool calls into Python source. The proxy now
+  filters observed cases such as `skill({"skill":"figure-style"})`, path-only
+  `code` fields, and giant import blobs before execution.
 - Local model latency matters. Tiny prompts worked; longer Claude Science loops
   need careful model and token-cap tuning.
 - Local backends may serialize concurrent requests. MTPLX can return
@@ -93,6 +114,10 @@ expose OpenAI-compatible chat completions. The proxy does the translation:
 - The model picker needs a Claude-shaped compatibility ID plus a human display
   name. Claude Science filters non-`claude-` IDs and slug-like display names
   from `/api/models`, so set `PROXY_MODEL_DISPLAY_NAMES` for local backends.
+- Free OpenRouter routes are useful for provider smoke tests but can 429 during
+  real Claude Science foreground turns because the app sends much larger
+  system/tool context than the smoke script. Use MTPLX or a paid/private route
+  for a clean public UI demo.
 
 ## How to Try Another Model
 

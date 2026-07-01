@@ -93,6 +93,11 @@ PROXY_PROFILE=profiles/mtplx-qwen.env.example ./scripts/doctor.sh
 ./scripts/test-streaming-proxy.sh
 ```
 
+`/healthz` is intentionally safe to share in bug reports. It includes provider
+identity, stream mode, request-kind counters, provider latency summaries, retry
+counts, and tool-filter reason counts, but not prompts, tool arguments, tool
+results, account state, or artifacts.
+
 Provider-only smoke tests are available without launching Claude Science:
 
 ```bash
@@ -123,31 +128,51 @@ background cutoff when their request shape would otherwise return an immediate
 
 ## Current Proof
 
-The gateway path works with an isolated Claude Science app copy and an
-MTPLX/Qwen backend. Verified paths include deterministic UI replies, short
+The gateway path works with an isolated Claude Science app copy and MTPLX/Qwen
+or OpenRouter backends. Verified paths include deterministic UI replies, short
 analysis prompts, focused tool loops, reviewer `submit_output`, `python` plus
-`save_artifacts` probes, and local model-picker labels.
+`save_artifacts` probes, OpenRouter/Gemma artifact runs, local Qwen artifact
+runs, reviewer inspection-tool routing, and local/provider model-picker labels.
+
+The strongest current local Qwen workflow proof is frame
+`55f1c397-47ea-4d9a-adda-48cf357fc4c4`: Qwen 27B created and saved TSV,
+Markdown, and PNG artifacts through Claude Science. Its reviewer child used
+real reviewer inspection tools (`repl` and `read_file`) after the Qwen execution
+profile exposed a reviewer-specific allowlist. The reviewer did useful checks
+but was still slow and loop-prone, so the profile now includes an opt-in
+closeout guard that forwards only `submit_output` after several reviewer
+inspection results.
 
 The newer `2bc1ac85` Claude Science client was also tested in a temp copy. It
 still honored `ANTHROPIC_BASE_URL` and called the proxy through `/v1/models` and
 `/v1/messages`.
 
 Known caveats: long buffered generations can starve the app of SSE events;
-direct streaming needs more app-side proof; local models vary a lot in tool-call
-quality.
+direct streaming now has deterministic heartbeat and request-ID coverage in the
+proxy test suite, but MTPLX/Qwen direct mode still needs fresh app-side proof
+for persisted long tool loops; free-provider endpoints can rate-limit mid-run;
+local/free models vary a lot in tool-call and figure-layout quality; Qwen 27B
+can complete artifact workflows but tends to split work across many tool turns
+and may over-inspect in reviewer frames without the closeout guard.
 
 For detailed checks and evidence, see
 [`docs/verification-checklist.md`](docs/verification-checklist.md) and
 [`docs/roadmap.md`](docs/roadmap.md).
 
+For public-demo capture notes, including how the in-app model label is
+configured and why OpenRouter-free UI GIFs can be flaky even when provider
+smokes pass, see [`docs/demo-capture.md`](docs/demo-capture.md).
+
 ## Repo Map
 
 - `proxy/`: dependency-light Anthropic Messages to OpenAI-compatible proxy.
+  `observability.py` and `request_shape.py` are the first extracted modules;
+  the conversion/server code is still being split out incrementally.
 - `profiles/`: provider and experiment profiles.
 - `scripts/`: launch, status, smoke-test, and app verification helpers.
 - `tests/`: regression tests for streaming, tool filtering, and adapters.
 - `docs/`: access notes, provider setup, architecture, verification, roadmap,
-  comparison, and prior-art review.
+  comparison, demo-capture notes, and prior-art review.
 - `AGENTS.md`: orientation for humans or agents cloning the repo.
 - `_local/`: ignored local-only runtime area.
 

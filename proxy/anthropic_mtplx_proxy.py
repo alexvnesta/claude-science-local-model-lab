@@ -24,8 +24,10 @@ import errno
 import hashlib
 import json
 import os
+import queue
 import re
 import sys
+import threading
 import time
 import traceback
 import urllib.error
@@ -34,6 +36,13 @@ import urllib.request
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
+
+try:
+    from .observability import METRICS, log_event
+    from .request_shape import build_request_shape
+except ImportError:  # Allows `python proxy/anthropic_mtplx_proxy.py`.
+    from observability import METRICS, log_event
+    from request_shape import build_request_shape
 
 
 def _env(name: str, default: str) -> str:
@@ -57,11 +66,26 @@ DEFAULT_UPSTREAM_MODEL = _env_first(
     ("UPSTREAM_OPENAI_MODEL", "MTPLX_OPENAI_MODEL"),
     "mtplx-qwen36-27b-optimized-quality",
 )
+
+
+def infer_provider_name(upstream_base: str) -> str:
+    lowered = upstream_base.lower()
+    if "openrouter.ai" in lowered:
+        return "openrouter"
+    if "127.0.0.1:8030" in lowered or "localhost:8030" in lowered or "mtplx" in lowered:
+        return "mtplx"
+    if "127.0.0.1:11434" in lowered or "localhost:11434" in lowered:
+        return "ollama"
+    return "openai-compatible"
+
+
+DEFAULT_PROVIDER_NAME = _env("PROXY_PROVIDER_NAME", infer_provider_name(DEFAULT_UPSTREAM_BASE))
 DEFAULT_TIMEOUT = float(_env("PROXY_REQUEST_TIMEOUT", "180"))
 DEFAULT_MAX_TOKENS_CAP = int(_env("PROXY_MAX_TOKENS_CAP", "4096"))
 DEFAULT_UPSTREAM_RETRIES = int(_env("PROXY_UPSTREAM_RETRIES", "2"))
 DEFAULT_UPSTREAM_RETRY_DELAY = float(_env("PROXY_UPSTREAM_RETRY_DELAY", "2"))
 DEFAULT_STREAM_MODE = _env("PROXY_STREAM_MODE", "direct")
+DEFAULT_STREAM_HEARTBEAT_SECONDS = float(_env("PROXY_STREAM_HEARTBEAT_SECONDS", "0"))
 DEFAULT_TOOL_MODE = _env("PROXY_TOOL_MODE", "pass")
 DEFAULT_TOOL_ALLOWLIST = _env("PROXY_TOOL_ALLOWLIST", "")
 DEFAULT_TOOL_VALIDATION = _env("PROXY_TOOL_VALIDATION", "schema")
@@ -70,6 +94,10 @@ DEFAULT_FORCE_MENTIONED_TOOL = _env("PROXY_FORCE_MENTIONED_TOOL", "0")
 DEFAULT_PARSE_TEXT_TOOL_CALLS = _env("PROXY_PARSE_TEXT_TOOL_CALLS", "0")
 DEFAULT_SCHEMA_LOG_PATH = _env("PROXY_SCHEMA_LOG_PATH", "")
 DEFAULT_HARNESS_TOOLS = _env("PROXY_HARNESS_TOOLS", "submit_output")
+DEFAULT_HARNESS_TOOL_ALLOWLIST = _env("PROXY_HARNESS_TOOL_ALLOWLIST", "")
+DEFAULT_HARNESS_FORCE_SUBMIT_AFTER_TOOL_RESULTS = int(
+    _env("PROXY_HARNESS_FORCE_SUBMIT_AFTER_TOOL_RESULTS", "0")
+)
 DEFAULT_CLAUDE_SCIENCE_COMPAT = _env("PROXY_CLAUDE_SCIENCE_COMPAT", "0")
 DEFAULT_MTPLX_AVOID_BACKGROUND_BYPASS = _env("PROXY_MTPLX_AVOID_BACKGROUND_BYPASS", "0")
 DEFAULT_MTPLX_BACKGROUND_MAX_TOKENS = int(_env("PROXY_MTPLX_BACKGROUND_MAX_TOKENS", "48"))
@@ -96,11 +124,13 @@ class ProxyConfig:
         self,
         upstream_base: str,
         upstream_model: str,
+        provider_name: str,
         timeout: float,
         max_tokens_cap: int,
         upstream_retries: int,
         upstream_retry_delay: float,
         stream_mode: str,
+        stream_heartbeat_seconds: float,
         tool_mode: str,
         tool_allowlist: list[str],
         tool_validation: str,
@@ -109,6 +139,8 @@ class ProxyConfig:
         parse_text_tool_calls: bool,
         schema_log_path: str,
         harness_tools: list[str],
+        harness_tool_allowlist: list[str],
+        harness_force_submit_after_tool_results: int,
         claude_science_compat: bool,
         mtplx_avoid_background_bypass: bool,
         mtplx_background_max_tokens: int,
@@ -118,11 +150,13 @@ class ProxyConfig:
     ) -> None:
         self.upstream_base = upstream_base.rstrip("/")
         self.upstream_model = upstream_model
+        self.provider_name = provider_name
         self.timeout = timeout
         self.max_tokens_cap = max_tokens_cap
         self.upstream_retries = upstream_retries
         self.upstream_retry_delay = upstream_retry_delay
         self.stream_mode = stream_mode
+        self.stream_heartbeat_seconds = stream_heartbeat_seconds
         self.tool_mode = tool_mode
         self.tool_allowlist = tool_allowlist
         self.tool_validation = tool_validation
@@ -131,6 +165,8 @@ class ProxyConfig:
         self.parse_text_tool_calls = parse_text_tool_calls
         self.schema_log_path = schema_log_path
         self.harness_tools = harness_tools
+        self.harness_tool_allowlist = harness_tool_allowlist
+        self.harness_force_submit_after_tool_results = harness_force_submit_after_tool_results
         self.claude_science_compat = claude_science_compat
         self.mtplx_avoid_background_bypass = mtplx_avoid_background_bypass
         self.mtplx_background_max_tokens = mtplx_background_max_tokens
@@ -142,11 +178,13 @@ class ProxyConfig:
 CONFIG = ProxyConfig(
     DEFAULT_UPSTREAM_BASE,
     DEFAULT_UPSTREAM_MODEL,
+    DEFAULT_PROVIDER_NAME,
     DEFAULT_TIMEOUT,
     DEFAULT_MAX_TOKENS_CAP,
     DEFAULT_UPSTREAM_RETRIES,
     DEFAULT_UPSTREAM_RETRY_DELAY,
     DEFAULT_STREAM_MODE,
+    DEFAULT_STREAM_HEARTBEAT_SECONDS,
     DEFAULT_TOOL_MODE,
     [],
     "schema",
@@ -155,6 +193,8 @@ CONFIG = ProxyConfig(
     False,
     "",
     [],
+    [],
+    0,
     False,
     False,
     48,
@@ -247,15 +287,18 @@ CONFIG.force_mentioned_tool = parse_bool(DEFAULT_FORCE_MENTIONED_TOOL)
 CONFIG.parse_text_tool_calls = parse_bool(DEFAULT_PARSE_TEXT_TOOL_CALLS)
 CONFIG.schema_log_path = DEFAULT_SCHEMA_LOG_PATH
 CONFIG.harness_tools = parse_csv(DEFAULT_HARNESS_TOOLS)
+CONFIG.harness_tool_allowlist = parse_csv(DEFAULT_HARNESS_TOOL_ALLOWLIST)
+CONFIG.harness_force_submit_after_tool_results = DEFAULT_HARNESS_FORCE_SUBMIT_AFTER_TOOL_RESULTS
 CONFIG.claude_science_compat = parse_bool(DEFAULT_CLAUDE_SCIENCE_COMPAT)
 CONFIG.mtplx_avoid_background_bypass = parse_bool(DEFAULT_MTPLX_AVOID_BACKGROUND_BYPASS)
 CONFIG.mtplx_background_max_tokens = DEFAULT_MTPLX_BACKGROUND_MAX_TOKENS
 CONFIG.mtplx_background_no_history_max_chars = DEFAULT_MTPLX_BACKGROUND_NO_HISTORY_MAX_CHARS
 CONFIG.model_display_names = parse_model_display_names(DEFAULT_MODEL_DISPLAY_NAMES)
+CONFIG.stream_heartbeat_seconds = max(0.0, DEFAULT_STREAM_HEARTBEAT_SECONDS)
 
 
-def log(message: str) -> None:
-    print(f"[anthropic-mtplx-proxy] {message}", file=sys.stderr, flush=True)
+def log(message: str, *, request_id: str | None = None) -> None:
+    log_event(message, request_id=request_id)
 
 
 def pretty_model_name(model: str) -> str:
@@ -372,6 +415,61 @@ def latest_user_text(payload: dict[str, Any]) -> str:
         if isinstance(message, dict) and message.get("role") == "user":
             return user_text_without_tool_results(message)
     return ""
+
+
+def completed_harness_tool_names(payload: dict[str, Any]) -> set[str]:
+    tool_use_names_by_id: dict[str, str] = {}
+    completed_names: set[str] = set()
+    harness_tools = set(CONFIG.harness_tools)
+
+    for message in payload.get("messages") or []:
+        if not isinstance(message, dict):
+            continue
+        role = message.get("role")
+        content = message.get("content")
+        if role == "assistant" and isinstance(content, list):
+            for block in content:
+                if not isinstance(block, dict) or block.get("type") != "tool_use":
+                    continue
+                name = block.get("name")
+                tool_id = block.get("id")
+                if isinstance(name, str) and name in harness_tools and isinstance(tool_id, str):
+                    tool_use_names_by_id[tool_id] = name
+        elif role == "user":
+            for block in tool_result_blocks(message):
+                tool_id = block.get("tool_use_id") or block.get("id")
+                if isinstance(tool_id, str) and tool_id in tool_use_names_by_id:
+                    completed_names.add(tool_use_names_by_id[tool_id])
+
+    return completed_names
+
+
+def completed_non_harness_tool_result_count(payload: dict[str, Any]) -> int:
+    tool_use_names_by_id: dict[str, str] = {}
+    completed_count = 0
+    harness_tools = set(CONFIG.harness_tools)
+
+    for message in payload.get("messages") or []:
+        if not isinstance(message, dict):
+            continue
+        role = message.get("role")
+        content = message.get("content")
+        if role == "assistant" and isinstance(content, list):
+            for block in content:
+                if not isinstance(block, dict) or block.get("type") != "tool_use":
+                    continue
+                name = block.get("name")
+                tool_id = block.get("id")
+                if isinstance(name, str) and isinstance(tool_id, str):
+                    tool_use_names_by_id[tool_id] = name
+        elif role == "user":
+            for block in tool_result_blocks(message):
+                tool_id = block.get("tool_use_id") or block.get("id")
+                name = tool_use_names_by_id.get(tool_id) if isinstance(tool_id, str) else None
+                if isinstance(name, str) and name not in harness_tools:
+                    completed_count += 1
+
+    return completed_count
 
 
 def openai_message_roles(request: dict[str, Any]) -> list[str]:
@@ -516,13 +614,12 @@ def anthropic_to_openai(payload: dict[str, Any], stream: bool = False) -> dict[s
             )
 
     tools = []
-    allowlist = set(CONFIG.tool_allowlist)
-    harness_tools = set(CONFIG.harness_tools)
+    allowlist = effective_tool_allowlist(payload)
     for tool in payload.get("tools") or []:
         if not isinstance(tool, dict):
             continue
         name = tool.get("name")
-        if allowlist and name not in allowlist and name not in harness_tools:
+        if allowlist is not None and name not in allowlist:
             continue
         tools.append(
             {
@@ -584,17 +681,53 @@ def anthropic_to_openai(payload: dict[str, Any], stream: bool = False) -> dict[s
         if isinstance(tool.get("function"), dict)
         and isinstance(tool["function"].get("name"), str)
     ]
+    harness_tools = set(CONFIG.harness_tools)
+    closeout_harness_name = None
+    if CONFIG.harness_force_submit_after_tool_results > 0:
+        completed_harness = completed_harness_tool_names(payload)
+        completed_non_harness = completed_non_harness_tool_result_count(payload)
+        for name in forwarded_names:
+            if (
+                name in harness_tools
+                and name not in completed_harness
+                and completed_non_harness >= CONFIG.harness_force_submit_after_tool_results
+            ):
+                closeout_harness_name = name
+                break
+    if closeout_harness_name:
+        tools = [
+            tool
+            for tool in tools
+            if tool.get("function", {}).get("name") == closeout_harness_name
+        ]
+        request["tools"] = tools
+        forwarded_names = [closeout_harness_name]
+        request["tool_choice"] = {
+            "type": "function",
+            "function": {"name": closeout_harness_name},
+        }
+        log(
+            "forcing harness closeout "
+            f"{closeout_harness_name!r} after "
+            f"{completed_non_harness_tool_result_count(payload)} non-harness tool results"
+        )
     if (
         CONFIG.tool_mode == "pass"
         and len(forwarded_names) == 1
         and forwarded_names[0] in harness_tools
         and request.get("tool_choice") in (None, "auto", "required")
     ):
-        request["tool_choice"] = {
-            "type": "function",
-            "function": {"name": forwarded_names[0]},
-        }
-        log(f"forcing harness tool_choice {forwarded_names[0]!r}")
+        harness_name = forwarded_names[0]
+        if harness_name in completed_harness_tool_names(payload):
+            if request.get("tool_choice") == "required":
+                request["tool_choice"] = "auto"
+            log(f"not forcing completed harness tool_choice {harness_name!r}")
+        else:
+            request["tool_choice"] = {
+                "type": "function",
+                "function": {"name": harness_name},
+            }
+            log(f"forcing harness tool_choice {harness_name!r}")
 
     return request
 
@@ -610,10 +743,13 @@ def forced_mentioned_tool(payload: dict[str, Any], forwarded_tool_names: list[st
         escaped = re.escape(name.lower())
         patterns = [
             rf"\buse\s+(?:the\s+)?`?{escaped}`?\s+tool\b",
+            rf"\buse\s+(?:the\s+)?`?{escaped}`?\b",
+            rf"\brun\s+(?:the\s+)?`?{escaped}`?\b",
             rf"\bcall\s+(?:the\s+)?`?{escaped}`?\s+tool\b",
             rf"\bcall\s+(?:the\s+)?`?{escaped}`?\b",
             rf"\bload\s+(?:the\s+)?`?{escaped}`?\s+tool\b",
             rf"\bmust\s+call\s+(?:the\s+)?`?{escaped}`?\b",
+            rf"\bafter\s+`?{escaped}`?\s+(?:returns|succeeds|finishes)\b",
         ]
         for pattern in patterns:
             match = re.search(pattern, text)
@@ -639,21 +775,33 @@ def tool_names(payload: dict[str, Any]) -> list[str]:
     return names
 
 
+def effective_tool_allowlist(payload: dict[str, Any]) -> set[str] | None:
+    harness_tools = set(CONFIG.harness_tools)
+    offered_names = set(tool_names(payload))
+    if offered_names & harness_tools and CONFIG.harness_tool_allowlist:
+        harness_allowlist = set(CONFIG.harness_tool_allowlist)
+        if "*" in harness_allowlist:
+            return None
+        return harness_allowlist | harness_tools
+
+    if CONFIG.tool_allowlist:
+        return set(CONFIG.tool_allowlist) | harness_tools
+    return None
+
+
 def tool_schema_map(
     payload: dict[str, Any],
-    allowlist: list[str] | None = None,
 ) -> dict[str, dict[str, Any]]:
     tools = payload.get("tools")
     if not isinstance(tools, list):
         return {}
-    allowed = set(allowlist or [])
-    harness_tools = set(CONFIG.harness_tools)
+    allowed = effective_tool_allowlist(payload)
     schemas: dict[str, dict[str, Any]] = {}
     for tool in tools:
         if not isinstance(tool, dict):
             continue
         name = tool.get("name")
-        if allowed and name not in allowed and name not in harness_tools:
+        if allowed is not None and name not in allowed:
             continue
         schema = tool.get("input_schema")
         if isinstance(name, str) and name and isinstance(schema, dict):
@@ -896,6 +1044,106 @@ def repair_metadata_arguments(
     return repaired
 
 
+def string_to_list_argument(value: str) -> list[str]:
+    stripped = value.strip()
+    if not stripped:
+        return []
+    try:
+        parsed = json.loads(stripped)
+    except json.JSONDecodeError:
+        parsed = None
+    if isinstance(parsed, list) and all(isinstance(item, str) for item in parsed):
+        return parsed
+
+    lines = [
+        re.sub(r"^\s*(?:[-*]|\d+[.)])\s*", "", line).strip()
+        for line in stripped.splitlines()
+    ]
+    nonempty = [line for line in lines if line]
+    return nonempty or [stripped]
+
+
+def repair_submit_output_arguments(
+    name: str,
+    arguments: dict[str, Any],
+    schema: dict[str, Any] | None,
+) -> dict[str, Any]:
+    if CONFIG.tool_repair != "metadata" or name != "submit_output" or not schema:
+        return arguments
+    properties = schema.get("properties")
+    if not isinstance(properties, dict):
+        return arguments
+
+    bullets_schema = properties.get("_completion_bullets")
+    if not isinstance(bullets_schema, dict):
+        return arguments
+    if bullets_schema.get("type") != "array":
+        return arguments
+    bullets = arguments.get("_completion_bullets")
+    if not isinstance(bullets, str):
+        return arguments
+
+    repaired = dict(arguments)
+    repaired["_completion_bullets"] = string_to_list_argument(bullets)
+    log("repaired submit_output _completion_bullets string into an array")
+    return repaired
+
+
+def validate_python_arguments(name: str, arguments: dict[str, Any]) -> str | None:
+    if name != "python":
+        return None
+
+    code = arguments.get("code")
+    if not isinstance(code, str):
+        return None
+
+    stripped = code.strip()
+    single_line = "\n" not in stripped and "\r" not in stripped
+    if not stripped:
+        return "empty code"
+
+    lower = stripped.lower()
+    path_like_suffix = (
+        ".py",
+        ".ipynb",
+        ".txt",
+        ".md",
+        ".csv",
+        ".tsv",
+        ".json",
+        ".png",
+        ".pdf",
+    )
+    python_syntax_markers = ("(", ")", "=", "import ", "from ", "def ", "class ", "for ", "while ")
+    if (
+        single_line
+        and len(stripped) <= 260
+        and lower.endswith(path_like_suffix)
+        and not any(marker in lower for marker in python_syntax_markers)
+    ):
+        return "code field is only a path or artifact filename"
+
+    if (
+        single_line
+        and len(stripped) > 400
+        and lower.startswith(("import ", "from "))
+        and stripped.count(",") > 15
+    ):
+        return "single-line import blob is likely a malformed tool call"
+
+    tool_like_call = re.search(
+        r"(?m)^\s*"
+        r"(?:skill|search_skills|save_artifacts|read_file|web_search|repl|"
+        r"summary_query|query_target_history|boundary|update_step_status)"
+        r"\s*\(\s*(?:\{|human_description\s*=)",
+        stripped,
+    )
+    if tool_like_call:
+        return "Claude Science tool call was placed inside python code"
+
+    return None
+
+
 def validate_tool_use_block(
     block: dict[str, Any] | None,
     tool_schemas: dict[str, dict[str, Any]],
@@ -905,32 +1153,44 @@ def validate_tool_use_block(
 
     name = block.get("name")
     if not isinstance(name, str) or not name:
+        METRICS.record_tool_filter(reason="malformed_no_name")
         log("dropping malformed tool call without a function name")
         return None
 
     if CONFIG.tool_validation in ("name", "schema"):
         if not tool_schemas:
+            METRICS.record_tool_filter(reason="no_tools_offered")
             log(f"dropping tool call {name!r}; request did not offer tools")
             return None
         if name not in tool_schemas:
+            METRICS.record_tool_filter(reason="unknown_tool")
             log(f"dropping unknown tool call {name!r}")
             return None
 
     arguments = coerce_tool_arguments(block.get("input"))
     if arguments is None:
+        METRICS.record_tool_filter(reason="bad_arguments")
         log(f"dropping tool call {name!r}; arguments are not a JSON object")
         return None
 
     schema = tool_schemas.get(name)
     arguments = repair_metadata_arguments(name, arguments, schema)
+    arguments = repair_submit_output_arguments(name, arguments, schema)
     block["input"] = arguments
 
     if CONFIG.tool_validation == "schema":
         if schema:
             errors = validate_json_schema(arguments, schema)
             if errors:
+                METRICS.record_tool_filter(reason="schema_invalid")
                 log(f"dropping invalid tool call {name!r}: {'; '.join(errors[:3])}")
                 return None
+
+    python_error = validate_python_arguments(name, arguments)
+    if python_error:
+        METRICS.record_tool_filter(reason="python_sanity")
+        log(f"dropping invalid python tool call: {python_error}")
+        return None
 
     return block
 
@@ -1262,7 +1522,12 @@ def upstream_request_headers(*, stream: bool = False) -> dict[str, str]:
     return headers
 
 
-def call_openai_chat(request: dict[str, Any]) -> dict[str, Any]:
+def call_openai_chat(
+    request: dict[str, Any],
+    *,
+    request_id: str | None = None,
+    request_kind: str = "unknown",
+) -> dict[str, Any]:
     request = dict(request)
     request["stream"] = False
     url = f"{CONFIG.upstream_base}/chat/completions"
@@ -1284,19 +1549,25 @@ def call_openai_chat(request: dict[str, Any]) -> dict[str, Any]:
             detail = exc.read().decode("utf-8", "replace")
             last_detail = detail or str(exc)
             if attempt < CONFIG.upstream_retries and should_retry_upstream(exc.code, last_detail):
+                METRICS.record_upstream_retry(status=exc.code)
                 delay = CONFIG.upstream_retry_delay * (attempt + 1)
-                log(f"upstream HTTP {exc.code}; retrying in {delay:.1f}s")
+                log(f"upstream HTTP {exc.code}; retrying in {delay:.1f}s", request_id=request_id)
                 time.sleep(delay)
                 continue
             raise UpstreamHTTPError(exc.code, last_detail) from exc
     else:
         raise UpstreamHTTPError(503, last_detail or "upstream retry limit exceeded")
     elapsed = time.monotonic() - started
-    log(f"upstream completed in {elapsed:.1f}s")
+    METRICS.record_provider_latency(kind=request_kind, elapsed_seconds=elapsed)
+    log(f"upstream completed in {elapsed:.1f}s", request_id=request_id)
     return json.loads(raw)
 
 
-def open_openai_stream(request: dict[str, Any]) -> Any:
+def open_openai_stream(
+    request: dict[str, Any],
+    *,
+    request_id: str | None = None,
+) -> Any:
     request = dict(request)
     request["stream"] = True
     url = f"{CONFIG.upstream_base}/chat/completions"
@@ -1315,15 +1586,23 @@ def open_openai_stream(request: dict[str, Any]) -> Any:
             detail = exc.read().decode("utf-8", "replace")
             last_detail = detail or str(exc)
             if attempt < CONFIG.upstream_retries and should_retry_upstream(exc.code, last_detail):
+                METRICS.record_upstream_retry(status=exc.code)
                 delay = CONFIG.upstream_retry_delay * (attempt + 1)
-                log(f"upstream stream HTTP {exc.code}; retrying in {delay:.1f}s")
+                log(
+                    f"upstream stream HTTP {exc.code}; retrying in {delay:.1f}s",
+                    request_id=request_id,
+                )
                 time.sleep(delay)
                 continue
             raise UpstreamHTTPError(exc.code, last_detail) from exc
     raise UpstreamHTTPError(503, last_detail or "upstream stream retry limit exceeded")
 
 
-def iter_openai_stream(response: Any) -> Any:
+def iter_openai_stream(
+    response: Any,
+    *,
+    request_id: str | None = None,
+) -> Any:
     for raw_line in response:
         line = raw_line.decode("utf-8", "replace").strip()
         if not line or line.startswith(":"):
@@ -1337,7 +1616,45 @@ def iter_openai_stream(response: Any) -> Any:
         try:
             yield json.loads(line)
         except json.JSONDecodeError:
-            log(f"skipping non-json stream line: {line[:200]}")
+            log(f"skipping non-json stream line: {line[:200]}", request_id=request_id)
+
+
+def iter_openai_stream_events(
+    response: Any,
+    *,
+    heartbeat_seconds: float,
+    request_id: str | None = None,
+) -> Any:
+    if heartbeat_seconds <= 0:
+        for chunk in iter_openai_stream(response, request_id=request_id):
+            yield ("chunk", chunk)
+        return
+
+    events: queue.Queue[tuple[str, Any]] = queue.Queue()
+
+    def read_upstream() -> None:
+        try:
+            for chunk in iter_openai_stream(response, request_id=request_id):
+                events.put(("chunk", chunk))
+        except BaseException as exc:  # noqa: BLE001 - re-raised in stream thread.
+            events.put(("error", exc))
+        finally:
+            events.put(("done", None))
+
+    thread = threading.Thread(target=read_upstream, daemon=True)
+    thread.start()
+
+    while True:
+        try:
+            kind, value = events.get(timeout=heartbeat_seconds)
+        except queue.Empty:
+            yield ("heartbeat", None)
+            continue
+        if kind == "done":
+            return
+        if kind == "error":
+            raise value
+        yield (kind, value)
 
 
 def estimate_tokens(payload: Any) -> int:
@@ -1350,17 +1667,27 @@ def sse_event(name: str, data: dict[str, Any]) -> bytes:
     return f"event: {name}\ndata: {encoded}\n\n".encode("utf-8")
 
 
-def send_sse_headers(handler: BaseHTTPRequestHandler) -> None:
+def send_sse_headers(
+    handler: BaseHTTPRequestHandler,
+    *,
+    request_id: str | None = None,
+) -> None:
     handler.send_response(200)
     handler.send_header("Content-Type", "text/event-stream")
     handler.send_header("Cache-Control", "no-cache")
     handler.send_header("X-Accel-Buffering", "no")
     handler.send_header("Connection", "close")
+    if request_id:
+        handler.send_header("X-Request-Id", request_id)
     handler.end_headers()
 
 
 def write_sse(handler: BaseHTTPRequestHandler, name: str, data: dict[str, Any]) -> None:
     handler.wfile.write(sse_event(name, data))
+
+
+def write_sse_comment(handler: BaseHTTPRequestHandler, comment: str) -> None:
+    handler.wfile.write(f": {comment}\n\n".encode("utf-8"))
 
 
 def finish_sse(handler: BaseHTTPRequestHandler) -> None:
@@ -1444,8 +1771,13 @@ def emit_anthropic_message_events(handler: BaseHTTPRequestHandler, message: dict
     finish_sse(handler)
 
 
-def stream_anthropic(handler: BaseHTTPRequestHandler, message: dict[str, Any]) -> None:
-    send_sse_headers(handler)
+def stream_anthropic(
+    handler: BaseHTTPRequestHandler,
+    message: dict[str, Any],
+    *,
+    request_id: str | None = None,
+) -> None:
+    send_sse_headers(handler, request_id=request_id)
     emit_anthropic_message_events(handler, message)
 
 
@@ -1462,10 +1794,12 @@ def stream_openai_to_anthropic(
     request: dict[str, Any],
     requested_model: str,
     tool_schemas: dict[str, dict[str, Any]] | None = None,
+    request_id: str | None = None,
+    request_kind: str = "unknown",
 ) -> None:
     started = time.monotonic()
-    response = open_openai_stream(request)
-    send_sse_headers(handler)
+    response = open_openai_stream(request, request_id=request_id)
+    send_sse_headers(handler, request_id=request_id)
     schemas = tool_schemas or {}
 
     message_id = f"msg_{uuid.uuid4().hex}"
@@ -1575,7 +1909,15 @@ def stream_openai_to_anthropic(
         handler.wfile.flush()
 
     try:
-        for chunk in iter_openai_stream(response):
+        for event_kind, chunk in iter_openai_stream_events(
+            response,
+            heartbeat_seconds=CONFIG.stream_heartbeat_seconds,
+            request_id=request_id,
+        ):
+            if event_kind == "heartbeat":
+                write_sse_comment(handler, "heartbeat")
+                handler.wfile.flush()
+                continue
             choices = chunk.get("choices") or []
             if chunk.get("usage"):
                 usage = chunk["usage"]
@@ -1590,11 +1932,16 @@ def stream_openai_to_anthropic(
                     tool_schemas=schemas,
                 )
                 if message_started or saw_any_content:
-                    log("ignoring full-message stream fallback after partial stream output")
+                    log(
+                        "ignoring full-message stream fallback after partial stream output",
+                        request_id=request_id,
+                    )
                     finish_reason = choice.get("finish_reason") or finish_reason
                     continue
                 emit_anthropic_message_events(handler, message)
-                log(f"upstream stream completed in {time.monotonic() - started:.1f}s")
+                elapsed = time.monotonic() - started
+                METRICS.record_provider_latency(kind=request_kind, elapsed_seconds=elapsed)
+                log(f"upstream stream completed in {elapsed:.1f}s", request_id=request_id)
                 return
 
             finish_reason = choice.get("finish_reason") or finish_reason
@@ -1671,7 +2018,9 @@ def stream_openai_to_anthropic(
     )
     write_sse(handler, "message_stop", {"type": "message_stop"})
     finish_sse(handler)
-    log(f"upstream stream completed in {time.monotonic() - started:.1f}s")
+    elapsed = time.monotonic() - started
+    METRICS.record_provider_latency(kind=request_kind, elapsed_seconds=elapsed)
+    log(f"upstream stream completed in {elapsed:.1f}s", request_id=request_id)
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -1680,11 +2029,19 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt: str, *args: Any) -> None:
         log(f"{self.address_string()} {fmt % args}")
 
-    def _json(self, status: int, payload: dict[str, Any]) -> None:
+    def _json(
+        self,
+        status: int,
+        payload: dict[str, Any],
+        *,
+        request_id: str | None = None,
+    ) -> None:
         body = json.dumps(payload).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
+        if request_id:
+            self.send_header("X-Request-Id", request_id)
         self.end_headers()
         self.wfile.write(body)
 
@@ -1702,11 +2059,20 @@ class Handler(BaseHTTPRequestHandler):
                     "ok": True,
                     "upstream_base": CONFIG.upstream_base,
                     "upstream_model": CONFIG.upstream_model,
+                    "provider_name": CONFIG.provider_name,
+                    "provider": {
+                        "name": CONFIG.provider_name,
+                        "base_url": CONFIG.upstream_base,
+                        "model": CONFIG.upstream_model,
+                        "http_referer_header_set": bool(DEFAULT_UPSTREAM_HTTP_REFERER),
+                        "app_title_header_set": bool(DEFAULT_UPSTREAM_APP_TITLE),
+                    },
                     "advertised_models": CONFIG.advertised_models,
                     "max_tokens_cap": CONFIG.max_tokens_cap,
                     "upstream_retries": CONFIG.upstream_retries,
                     "upstream_retry_delay": CONFIG.upstream_retry_delay,
                     "stream_mode": CONFIG.stream_mode,
+                    "stream_heartbeat_seconds": CONFIG.stream_heartbeat_seconds,
                     "tool_mode": CONFIG.tool_mode,
                     "tool_allowlist": CONFIG.tool_allowlist,
                     "tool_validation": CONFIG.tool_validation,
@@ -1715,11 +2081,16 @@ class Handler(BaseHTTPRequestHandler):
                     "parse_text_tool_calls": CONFIG.parse_text_tool_calls,
                     "schema_log_path": CONFIG.schema_log_path,
                     "harness_tools": CONFIG.harness_tools,
+                    "harness_tool_allowlist": CONFIG.harness_tool_allowlist,
+                    "harness_force_submit_after_tool_results": (
+                        CONFIG.harness_force_submit_after_tool_results
+                    ),
                     "claude_science_compat": CONFIG.claude_science_compat,
                     "mtplx_avoid_background_bypass": CONFIG.mtplx_avoid_background_bypass,
                     "mtplx_background_max_tokens": CONFIG.mtplx_background_max_tokens,
                     "mtplx_background_no_history_max_chars": CONFIG.mtplx_background_no_history_max_chars,
                     "model_display_names": CONFIG.model_display_names,
+                    "metrics": METRICS.snapshot(),
                 },
             )
             return
@@ -1754,6 +2125,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:  # noqa: N802
         path = urllib.parse.urlparse(self.path).path
+        request_id: str | None = None
+        request_kind = "unknown"
         try:
             payload = self._read_json()
             if path == "/v1/messages/count_tokens":
@@ -1763,28 +2136,41 @@ class Handler(BaseHTTPRequestHandler):
                 self._json(404, {"error": {"type": "not_found_error", "message": path}})
                 return
 
+            request_id = METRICS.next_request_id()
             requested_model = str(payload.get("model") or CONFIG.upstream_model)
             stream_requested = bool(payload.get("stream"))
             log_tool_schema_inventory(payload)
             request = anthropic_to_openai(payload, stream=stream_requested)
             mtplx_background = apply_mtplx_background_bypass_guard(request)
-            schemas = tool_schema_map(payload, allowlist=CONFIG.tool_allowlist)
-            requested_max_tokens = payload.get("max_tokens")
-            request_kind = classify_request_kind(payload, request)
+            schemas = tool_schema_map(payload)
+            active_stream_mode = CONFIG.stream_mode if stream_requested else "nonstream"
+            request_shape = build_request_shape(
+                payload,
+                request,
+                harness_tools=CONFIG.harness_tools,
+                stream_mode=active_stream_mode,
+                requested_model=requested_model,
+                stream_requested=stream_requested,
+            )
+            request_kind = request_shape.kind
+            METRICS.record_message(kind=request_kind, stream_mode=active_stream_mode)
+            shape = request_shape.redacted_summary()
             log(
                 "request "
-                f"kind={request_kind} "
-                f"stream={stream_requested} "
-                f"messages={len(payload.get('messages') or [])} "
-                f"tools={len(payload.get('tools') or [])} "
-                f"upstream_tools={len(request.get('tools') or [])} "
-                f"tool_choice={request.get('tool_choice')} "
-                f"requested_max_tokens={requested_max_tokens} "
-                f"upstream_max_tokens={request.get('max_tokens')} "
+                f"kind={shape['kind']} "
+                f"stream={shape['stream_requested']} "
+                f"stream_mode={shape['stream_mode']} "
+                f"messages={shape['messages']} "
+                f"tools={shape['tools']} "
+                f"upstream_tools={shape['upstream_tools']} "
+                f"tool_choice={shape['tool_choice']} "
+                f"requested_max_tokens={shape['requested_max_tokens']} "
+                f"upstream_max_tokens={shape['upstream_max_tokens']} "
                 f"mtplx_background_risk={mtplx_background['risk']} "
                 f"mtplx_background_reasons={mtplx_background['reasons']} "
                 f"mtplx_roles={mtplx_background['roles']} "
-                f"mtplx_text_chars={mtplx_background['text_chars']}"
+                f"mtplx_text_chars={mtplx_background['text_chars']}",
+                request_id=request_id,
             )
             if stream_requested and CONFIG.stream_mode == "direct":
                 stream_openai_to_anthropic(
@@ -1792,34 +2178,50 @@ class Handler(BaseHTTPRequestHandler):
                     request,
                     requested_model=requested_model,
                     tool_schemas=schemas,
+                    request_id=request_id,
+                    request_kind=request_kind,
                 )
             else:
-                upstream = call_openai_chat(request)
+                upstream = call_openai_chat(
+                    request,
+                    request_id=request_id,
+                    request_kind=request_kind,
+                )
                 message = openai_to_anthropic(
                     upstream,
                     requested_model=requested_model,
                     tool_schemas=schemas,
                 )
                 if stream_requested:
-                    stream_anthropic(self, message)
+                    stream_anthropic(self, message, request_id=request_id)
                 else:
-                    self._json(200, message)
+                    self._json(200, message, request_id=request_id)
         except UpstreamHTTPError as exc:
             detail = exc.detail
-            log(f"upstream HTTP error {exc.status}: {detail[:500]}")
+            METRICS.record_upstream_error(status=exc.status)
+            log(f"upstream HTTP error {exc.status}: {detail[:500]}", request_id=request_id)
             self._json(
                 exc.status,
                 {"error": {"type": "upstream_error", "message": detail or str(exc)}},
+                request_id=request_id,
             )
         except (BrokenPipeError, ConnectionResetError, OSError) as exc:
             if is_client_disconnect(exc):
-                log("client disconnected before response completed")
+                log("client disconnected before response completed", request_id=request_id)
                 return
-            log(f"os error: {exc}\n{traceback.format_exc()}")
-            self._json(500, {"error": {"type": "proxy_error", "message": str(exc)}})
+            log(f"os error: {exc}\n{traceback.format_exc()}", request_id=request_id)
+            self._json(
+                500,
+                {"error": {"type": "proxy_error", "message": str(exc)}},
+                request_id=request_id,
+            )
         except Exception as exc:
-            log(f"error: {exc}\n{traceback.format_exc()}")
-            self._json(500, {"error": {"type": "proxy_error", "message": str(exc)}})
+            log(f"error: {exc}\n{traceback.format_exc()}", request_id=request_id)
+            self._json(
+                500,
+                {"error": {"type": "proxy_error", "message": str(exc)}},
+                request_id=request_id,
+            )
 
 
 class ProxyServer(ThreadingHTTPServer):
@@ -1839,6 +2241,7 @@ def main() -> int:
     parser.add_argument("--port", type=int, default=int(_env("PROXY_PORT", "18080")))
     parser.add_argument("--upstream-base", default=CONFIG.upstream_base)
     parser.add_argument("--upstream-model", default=CONFIG.upstream_model)
+    parser.add_argument("--provider-name", default=_env("PROXY_PROVIDER_NAME", ""))
     parser.add_argument("--timeout", type=float, default=CONFIG.timeout)
     parser.add_argument("--max-tokens-cap", type=int, default=CONFIG.max_tokens_cap)
     parser.add_argument("--upstream-retries", type=int, default=CONFIG.upstream_retries)
@@ -1852,6 +2255,15 @@ def main() -> int:
         default=CONFIG.stream_mode,
         choices=("direct", "buffered"),
         help="direct streams upstream SSE; buffered asks upstream for a full response then emits Anthropic SSE.",
+    )
+    parser.add_argument(
+        "--stream-heartbeat-seconds",
+        type=float,
+        default=CONFIG.stream_heartbeat_seconds,
+        help=(
+            "When >0 in direct stream mode, emit SSE comment heartbeats after this "
+            "many idle seconds between upstream chunks."
+        ),
     )
     parser.add_argument(
         "--tool-mode",
@@ -1897,6 +2309,24 @@ def main() -> int:
         help="Comma-separated structural harness tools that bypass the agent allowlist.",
     )
     parser.add_argument(
+        "--harness-tool-allowlist",
+        default=",".join(CONFIG.harness_tool_allowlist),
+        help=(
+            "Optional comma-separated tool names to forward for harness/reviewer "
+            "requests. Use '*' to forward every offered reviewer tool."
+        ),
+    )
+    parser.add_argument(
+        "--harness-force-submit-after-tool-results",
+        type=int,
+        default=CONFIG.harness_force_submit_after_tool_results,
+        help=(
+            "When >0, reviewer/harness requests that have already completed this "
+            "many non-harness tool results are closed out by forwarding only the "
+            "harness submit tool."
+        ),
+    )
+    parser.add_argument(
         "--claude-science-compat",
         default="1" if CONFIG.claude_science_compat else "0",
         help="Emit Claude Science execution-compatible tool_use metadata.",
@@ -1938,11 +2368,13 @@ def main() -> int:
 
     CONFIG.upstream_base = args.upstream_base.rstrip("/")
     CONFIG.upstream_model = args.upstream_model
+    CONFIG.provider_name = args.provider_name.strip() or infer_provider_name(CONFIG.upstream_base)
     CONFIG.timeout = args.timeout
     CONFIG.max_tokens_cap = args.max_tokens_cap
     CONFIG.upstream_retries = args.upstream_retries
     CONFIG.upstream_retry_delay = args.upstream_retry_delay
     CONFIG.stream_mode = parse_stream_mode(args.stream_mode)
+    CONFIG.stream_heartbeat_seconds = max(0.0, args.stream_heartbeat_seconds)
     CONFIG.tool_mode = parse_tool_mode(args.tool_mode)
     CONFIG.tool_allowlist = parse_csv(args.tool_allowlist)
     CONFIG.tool_validation = parse_tool_validation(args.tool_validation)
@@ -1951,6 +2383,11 @@ def main() -> int:
     CONFIG.parse_text_tool_calls = parse_bool(args.parse_text_tool_calls)
     CONFIG.schema_log_path = args.schema_log_path
     CONFIG.harness_tools = parse_csv(args.harness_tools)
+    CONFIG.harness_tool_allowlist = parse_csv(args.harness_tool_allowlist)
+    CONFIG.harness_force_submit_after_tool_results = max(
+        0,
+        args.harness_force_submit_after_tool_results,
+    )
     CONFIG.claude_science_compat = parse_bool(args.claude_science_compat)
     CONFIG.mtplx_avoid_background_bypass = parse_bool(args.mtplx_avoid_background_bypass)
     CONFIG.mtplx_background_max_tokens = args.mtplx_background_max_tokens
@@ -1964,9 +2401,11 @@ def main() -> int:
     log(
         f"listening on http://{args.host}:{args.port}; "
         f"upstream={CONFIG.upstream_base}; model={CONFIG.upstream_model}; "
+        f"provider={CONFIG.provider_name}; "
         f"max_tokens_cap={CONFIG.max_tokens_cap}; "
         f"retries={CONFIG.upstream_retries}; "
         f"stream_mode={CONFIG.stream_mode}; "
+        f"stream_heartbeat_seconds={CONFIG.stream_heartbeat_seconds}; "
         f"tool_mode={CONFIG.tool_mode}; "
         f"tool_allowlist={CONFIG.tool_allowlist or '<all>'}; "
         f"tool_validation={CONFIG.tool_validation}; "
@@ -1975,6 +2414,9 @@ def main() -> int:
         f"parse_text_tool_calls={CONFIG.parse_text_tool_calls}; "
         f"schema_log_path={CONFIG.schema_log_path or '<disabled>'}; "
         f"harness_tools={CONFIG.harness_tools}; "
+        f"harness_tool_allowlist={CONFIG.harness_tool_allowlist or '<main allowlist>'}; "
+        "harness_force_submit_after_tool_results="
+        f"{CONFIG.harness_force_submit_after_tool_results}; "
         f"claude_science_compat={CONFIG.claude_science_compat}; "
         f"mtplx_avoid_background_bypass={CONFIG.mtplx_avoid_background_bypass}; "
         f"mtplx_background_max_tokens={CONFIG.mtplx_background_max_tokens}; "

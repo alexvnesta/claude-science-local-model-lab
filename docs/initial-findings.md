@@ -94,9 +94,11 @@ Known rough edges:
   selector rendering `MTPLX Qwen 27B Local` without `(unavailable)`.
 - Claude Science requests very large `max_tokens` values. The proxy now caps
   upstream `max_tokens` with `PROXY_MAX_TOKENS_CAP` to keep local runs sane.
-- The proxy supports true stream bridging in tests, including text deltas and
-  tool-call argument deltas. MTPLX/Qwen direct streaming hung after
-  `message_start` in live testing, so MTPLX profiles use buffered mode.
+- The proxy supports true stream bridging in tests, including text deltas,
+  direct-stream heartbeat comments, request ID response headers, and buffered
+  validation of upstream streamed tool-call argument deltas. MTPLX/Qwen direct
+  streaming hung after `message_start` in live testing, so MTPLX profiles use
+  buffered mode until fresh app-side proof exists.
 - MTPLX latency is workable for tiny prompts but too slow for full scientific
   loops without careful model/profile tuning.
 - MTPLX can return `session_busy` when Claude Science sends background-review
@@ -142,12 +144,18 @@ Additional hardening:
 - Request logs now include `kind=harness`, `kind=tool_agent`,
   `kind=tools_hidden`, or `kind=plain` so reviewer, foreground tool, and
   analysis-only traffic are not conflated during debugging.
+- `/v1/messages` responses now include `X-Request-Id`, and `/healthz` exposes
+  redacted request-kind counters, stream-mode counters, provider latency,
+  retry/error counts, and tool-filter reason counts.
 - `./scripts/test-streaming-proxy.sh` covers:
   - streamed text deltas;
-  - streamed valid tool-call argument deltas;
+  - direct-stream heartbeat comments;
+  - request ID response headers;
+  - buffered validation of upstream streamed tool-call argument deltas;
   - filtering invalid streamed and non-streamed tool calls;
   - full JSON response fallback on a streamed request;
   - socket close after `message_stop`;
+  - redacted `/healthz` metrics;
   - non-streaming responses;
   - observed Qwen text-tool-call formats.
 
@@ -258,6 +266,52 @@ Additional app-side execution evidence:
   that frame used pre-compat `call_...` ids and later hit slow post-tool
   generation, it is evidence for permission/execution, not the preferred
   artifact-loop proof.
+
+## 2026-07-01 Qwen vs Gemma Artifact Workflow Result
+
+Gemma/OpenRouter proof:
+
+- Frame `d18147f0-825d-4930-857b-55406366cb09` ran through OpenRouter with
+  `google/gemma-4-31b-it:free`.
+- It created and saved TSV, Markdown, and PNG artifacts after one Python retry
+  caused by `pandas.to_markdown()` requiring `tabulate`.
+- The reviewer initially caught a hallucinated artifact-version reference, then
+  completed cleanly with `findings: []` after correction.
+- Caveats: free-provider 429s occurred, and the generated figure had clipped
+  mechanism text.
+
+Local Qwen proof:
+
+- Frame `55f1c397-47ea-4d9a-adda-48cf357fc4c4` ran through local MTPLX/Qwen
+  with `profiles/mtplx-qwen-execution-probe.env.example`.
+- The foreground frame produced `QWEN_REFINED_DONE`, saved
+  `qwen_refined_scores.tsv`, `qwen_refined_analysis.md`, and
+  `qwen_refined_figure.png`, and reported the correct top two modules:
+  Kupffer macrophage inflammation (17) and Fibrosis stellate niche (16).
+- Durable artifact versions:
+  - `f2193067-2ac6-4497-a51b-1beeea0540fd` for the TSV.
+  - `3464db49-f767-4692-9fee-46ebac3f8452` for the Markdown.
+  - `6032a393-888d-405d-9b9a-b3868a0dcb62` for the PNG.
+- The first Qwen clean run exposed a failure where the model tried
+  `skill({"skill":"figure-style"})` inside Python. The proxy now filters this
+  app-tool-smuggling shape before local execution.
+- The refined Qwen run avoided that `skill()` failure, but still split work
+  across several Python turns instead of creating all files in one call.
+- The refined Qwen figure was readable and unclipped, but Panel B became a
+  component breakdown rather than the requested simple mechanism schematic.
+- The reviewer improved after the Qwen execution profile added
+  `PROXY_HARNESS_TOOL_ALLOWLIST` for `repl`, `read_file`, `boundary`,
+  `summary_query`, `query_target_history`, and `submit_output`. The reviewer
+  used real `repl` and `read_file` calls to inspect artifacts and verify score
+  math.
+- The reviewer then over-inspected and delayed `submit_output`, so the profile
+  now enables `PROXY_HARNESS_FORCE_SUBMIT_AFTER_TOOL_RESULTS=6` to close long
+  reviewer loops by forwarding only `submit_output`.
+- After the long Qwen/reviewer run, the official Claude Science app remained
+  on `127.0.0.1:8765`, but the isolated app on `127.0.0.1:18765` and MTPLX on
+  `127.0.0.1:8030` were no longer reachable. Treat local process durability as
+  a remaining operational caveat, not as evidence against the completed
+  artifact proof.
 - A natural MASLD-HCC figure prompt exposed a Qwen behavior failure: the model
   promised to create artifacts and/or load figure skills but did not call a
   tool. Reviewer frames correctly flagged this as high-severity failed work.
@@ -268,8 +322,9 @@ Additional app-side execution evidence:
 - Long figure-producing Qwen runs exposed the buffered streaming ceiling. In
   `PROXY_STREAM_MODE=buffered`, the app accepts short tool-loop responses, but
   a long upstream generation can starve Claude Science of SSE events until the
-  client disconnects. A quick `PROXY_STREAM_MODE=direct` live-app trial did not
-  produce a persisted tool-loop frame, so direct streaming remains future work.
+  client disconnects. Direct mode now has proxy-level heartbeat coverage, but a
+  quick `PROXY_STREAM_MODE=direct` live-app trial did not produce a persisted
+  tool-loop frame, so direct Qwen app-side execution remains future work.
 
 Practical current ceiling:
 
@@ -277,6 +332,7 @@ Practical current ceiling:
   when tools are focused, ids are compatibility-normalized, local execution is
   approved for the conversation, and the generation completes quickly.
 - It is not yet reliable for full figure-producing analyses with reviewers in
-  one live app run. The next engineering target is robust direct Anthropic SSE
-  emission/heartbeats for long OpenAI-compatible tool-call streams, plus fresh
-  model-specific profiles for Gemma/Qwen variants.
+  one live app run. The next engineering target is app-side proof for direct
+  Anthropic SSE on long OpenAI-compatible tool-call streams, safe incremental
+  tool-argument handling, and fresh model-specific profiles for Gemma/Qwen
+  variants.
