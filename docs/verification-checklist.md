@@ -167,14 +167,33 @@ For public screenshots or GIFs, also confirm:
 - No account state, cookies, API keys, private prompts, tool arguments, tool
   results, or private artifacts are visible.
 
-Known-good MTPLX/Qwen GIF capture:
+Known-good MTPLX/Qwen workflow GIF capture:
 
-- Primary asset: `docs/assets/qwen-mtplx-annotated-demo.gif`.
-- Raw capture: `docs/assets/qwen-mtplx-clean-demo.gif`.
-- Frame: `be060a7f-5d68-4c19-a6ca-682356cd7789`.
+- Primary asset: `docs/assets/qwen-mtplx-tp53-workflow-demo.gif`.
+- Frame: `0b03da82-efe5-4440-be56-651d7053d1fb`.
 - Provider path: MTPLX on `127.0.0.1:8030/v1`, proxy on `127.0.0.1:18081`,
   isolated app on `127.0.0.1:18765`.
 - Model label shown: `MTPLX Qwen 27B Local`.
+- Prompt: TP53 differential expression in TCGA-BRCA with a pinned Xena matrix
+  URL.
+- Artifacts saved:
+  `tp53_expression_plot.png` (`ae4d414a-38de-4334-bcae-6aa3f3fdbda9`) and
+  `tp53_summary.md` (`830784fd-ff66-4761-b0c2-7b328e5cb8cf`).
+- Reviewer path: first reviewer
+  `be081ac7-04c1-4d5a-9151-8caf627797c8` failed the missing-artifact state;
+  final reviewer `063795d2-56a4-4776-84e6-afdd3970f05b` completed with
+  `findings: []` and resolved the prior failure.
+- Network allowlist required:
+  `tcga.xenahubs.net` and
+  `tcga-xena-hub.s3.dualstack.us-east-1.amazonaws.com`.
+- Caveat: the Xena matrix URL was pinned. This proves local model execution,
+  artifact creation, and reviewer recovery, not open-ended dataset discovery.
+
+Older exact-reply MTPLX/Qwen capture:
+
+- Asset: `docs/assets/qwen-mtplx-annotated-demo.gif`.
+- Raw capture: `docs/assets/qwen-mtplx-clean-demo.gif`.
+- Frame: `be060a7f-5d68-4c19-a6ca-682356cd7789`.
 - Prompt/answer marker: `QWEN MTPLX CLEAN OK`.
 - Caveat: reviewer later ended inconclusive with no structured output; the GIF
   proves foreground routing and rendering, not reviewer success.
@@ -323,6 +342,19 @@ Expected:
   `15ee6b53-3a23-4521-9228-8b06187d5da7` used real `repl`/`read_file`
   inspection tools but remained slow and loop-prone before the closeout guard
   was added.
+- Local Qwen TP53 workflow proof:
+  `0b03da82-efe5-4440-be56-651d7053d1fb` ran against
+  `mtplx-qwen36-27b-optimized-quality` through
+  `profiles/mtplx-qwen-execution-probe.env.example`. The foreground frame
+  downloaded the TCGA-BRCA Xena expression matrix, extracted TP53 values for
+  primary tumor (`-01`) and normal (`-11`) barcodes, generated a PNG
+  box-and-strip plot, saved `tp53_expression_plot.png`, and saved
+  `tp53_summary.md`. The first reviewer frame
+  `be081ac7-04c1-4d5a-9151-8caf627797c8` correctly failed the missing-artifact
+  state; the agent corrected; the final reviewer frame
+  `063795d2-56a4-4776-84e6-afdd3970f05b` completed with `findings: []` and a
+  resolved prior disposition. Caveat: this used a pinned Xena URL and therefore
+  does not prove open-ended dataset discovery.
 
 ## 6.1 Streaming Caveat For Long Tool Calls
 

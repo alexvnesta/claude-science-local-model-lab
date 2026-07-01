@@ -1367,14 +1367,38 @@ def parse_xmlish_tool_call_text(
     if allowed_names and name not in allowed_names:
         return None
 
-    arguments: dict[str, Any] = {}
+    raw_arguments: dict[str, Any] = {}
     for parameter, raw_value in re.findall(
         r"<parameter=([A-Za-z_][A-Za-z0-9_.-]*)>(.*?)</parameter>",
         stripped,
         flags=re.DOTALL,
     ):
-        arguments[parameter] = parse_loose_value(raw_value)
-    return (name, arguments) if arguments else None
+        raw_arguments[parameter] = parse_loose_value(raw_value)
+    if not raw_arguments:
+        body_start = match.end()
+        body_match = re.search(r"</function>|</tool_call>", stripped[body_start:], flags=re.DOTALL)
+        body_end = body_start + body_match.start() if body_match else len(stripped)
+        body = stripped[body_start:body_end]
+        parameter_matches = list(
+            re.finditer(r"<parameter=([A-Za-z_][A-Za-z0-9_.-]*)>", body)
+        )
+        for index, parameter_match in enumerate(parameter_matches):
+            value_start = parameter_match.end()
+            value_end = (
+                parameter_matches[index + 1].start()
+                if index + 1 < len(parameter_matches)
+                else len(body)
+            )
+            raw_value = body[value_start:value_end].strip()
+            raw_arguments[parameter_match.group(1)] = parse_loose_value(raw_value)
+
+    if not raw_arguments:
+        return None
+
+    argument_value = raw_arguments.get("arguments")
+    if isinstance(argument_value, dict):
+        return name, argument_value
+    return name, raw_arguments
 
 
 def parse_text_tool_call(
@@ -1429,6 +1453,14 @@ def parse_text_tool_call(
     marker_at = stripped.find(marker)
     if marker_at < 0:
         return None
+
+    xmlish = parse_xmlish_tool_call_text(
+        stripped[marker_at:],
+        allowed_tool_names=allowed_tool_names,
+    )
+    if xmlish is not None:
+        name, arguments = xmlish
+        return tool_use_block(name, arguments)
 
     raw = stripped[marker_at + len(marker) :].strip()
     start_positions = [pos for pos in (raw.find("["), raw.find("{")) if pos >= 0]

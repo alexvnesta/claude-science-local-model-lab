@@ -14,7 +14,59 @@ OpenRouter-free evidence includes provider smoke proof and model-picker routing
 proof, but the free-tier UI capture is not stable enough to publish as a
 working demo GIF.
 
-Current MTPLX/Qwen demo GIF:
+Primary MTPLX/Qwen workflow demo GIF:
+[`assets/qwen-mtplx-tp53-workflow-demo.gif`](assets/qwen-mtplx-tp53-workflow-demo.gif).
+It is an annotated presentation layer built from a real Claude Science run that
+produced a TCGA-BRCA TP53 expression plot and a markdown summary.
+
+The TP53 capture was recorded on 2026-07-01 with:
+
+- MTPLX serving `mtplx-qwen36-27b-optimized-quality` on
+  `127.0.0.1:8030/v1`.
+- Proxy on `127.0.0.1:18081` using
+  `profiles/mtplx-qwen-execution-probe.env.example`.
+- Isolated Claude Science on `127.0.0.1:18765`.
+- Visible model label: `MTPLX Qwen 27B Local`.
+- Prompt: a constrained TP53 task that pinned the Xena matrix URL:
+  `https://tcga.xenahubs.net/download/TCGA.BRCA.sampleMap/HiSeqV2.gz`.
+
+Evidence from the run:
+
+- Foreground frame `0b03da82-efe5-4440-be56-651d7053d1fb` completed.
+- First reviewer child `be081ac7-04c1-4d5a-9151-8caf627797c8` correctly failed
+  the run because the PNG and markdown had not yet been saved.
+- Qwen self-corrected, generated `tp53_expression_plot.png`, and saved
+  `tp53_summary.md`.
+- Final reviewer child `063795d2-56a4-4776-84e6-afdd3970f05b` completed with
+  `findings: []` and resolved the prior failure.
+- Saved artifacts:
+  - `tp53_expression_plot.png`, artifact
+    `ae4d414a-38de-4334-bcae-6aa3f3fdbda9`, checksum
+    `c8390dc423e6d334f856ec277371bb97de98ea224760261cd6baa3c416fdb5cc`.
+  - `tp53_summary.md`, artifact `830784fd-ff66-4761-b0c2-7b328e5cb8cf`,
+    checksum
+    `45f31d6d9c2070cf21425ba310e3e2377b251d30e83fe21062ec544815bad891`.
+
+Network note: Claude Science's network allowlist must include both the Xena hub
+and its redirected S3 host for this demo:
+
+- `tcga.xenahubs.net`
+- `tcga-xena-hub.s3.dualstack.us-east-1.amazonaws.com`
+
+This is a workflow proof, not a data-discovery proof. The Xena matrix URL was
+pinned so the GIF tests local model execution, artifact creation, and reviewer
+recovery rather than whether Qwen can discover the correct public dataset.
+
+Regenerate the annotated GIF from captured screenshots:
+
+```bash
+python3 scripts/make-tp53-demo-gif.py \
+  --capture-dir /tmp/tp53-qwen-final-capture \
+  --output docs/assets/qwen-mtplx-tp53-workflow-demo.gif \
+  --contact /tmp/tp53-qwen-demo-contact.png
+```
+
+Older exact-reply MTPLX/Qwen demo GIF:
 [`assets/qwen-mtplx-annotated-demo.gif`](assets/qwen-mtplx-annotated-demo.gif).
 It is an annotated presentation layer built from the raw capture at
 [`assets/qwen-mtplx-clean-demo.gif`](assets/qwen-mtplx-clean-demo.gif). The
@@ -27,9 +79,10 @@ raw capture was recorded on 2026-07-01 with:
 - Isolated Claude Science on `127.0.0.1:18765`.
 - Prompt: `No tools, no files, no browsing. Reply with exactly: QWEN MTPLX CLEAN OK`.
 
-The capture intentionally ends on the successful visible answer. In the same
-run, the reviewer later ended `Inconclusive` with no structured output, which
-is still a current Qwen/harness caveat for this no-tool demo path.
+The older exact-reply capture intentionally ends on the successful visible
+answer. In the same run, the reviewer later ended `Inconclusive` with no
+structured output, which is still a current Qwen/harness caveat for this
+no-tool demo path.
 
 ## Model Picker Labels
 
@@ -113,6 +166,8 @@ A useful short GIF should show:
   `MTPLX Qwen 27B`.
 - A short deterministic prompt.
 - The rendered response.
+- For workflow demos, the generated artifact or figure opened visibly in the
+  app, plus the final reviewer status.
 - Optionally, a terminal tail with redacted proxy lines showing
   `POST /v1/messages`, request kind, provider name, and request ID.
 

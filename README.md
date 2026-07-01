@@ -134,13 +134,21 @@ analysis prompts, focused tool loops, reviewer `submit_output`, `python` plus
 `save_artifacts` probes, OpenRouter/Gemma artifact runs, local Qwen artifact
 runs, reviewer inspection-tool routing, and local/provider model-picker labels.
 
-Short annotated demo GIF:
-[`docs/assets/qwen-mtplx-annotated-demo.gif`](docs/assets/qwen-mtplx-annotated-demo.gif).
-It shows the isolated app using the `MTPLX Qwen 27B Local` model label, the
-local proxy route, and a deterministic no-tool Qwen/MTPLX response rendered
-back in Claude Science.
+Primary Qwen/MTPLX workflow GIF:
+[`docs/assets/qwen-mtplx-tp53-workflow-demo.gif`](docs/assets/qwen-mtplx-tp53-workflow-demo.gif).
+It shows the isolated app using the `MTPLX Qwen 27B Local` model label,
+conversation-scoped Python permission, a reviewer finding, Qwen's corrective
+artifact creation, a final reviewer pass, and the generated TP53 TCGA-BRCA
+plot opened in split view.
 
-The strongest current local Qwen workflow proof is frame
+The most user-legible local Qwen workflow proof is frame
+`0b03da82-efe5-4440-be56-651d7053d1fb`: Qwen 27B downloaded the TCGA-BRCA Xena
+matrix, extracted TP53 expression for primary tumor and normal samples, saved
+`tp53_expression_plot.png` and `tp53_summary.md`, and completed after a reviewer
+finding was resolved. The final reviewer child
+`063795d2-56a4-4776-84e6-afdd3970f05b` returned `findings: []`.
+
+The broader synthetic local Qwen artifact proof is frame
 `55f1c397-47ea-4d9a-adda-48cf357fc4c4`: Qwen 27B created and saved TSV,
 Markdown, and PNG artifacts through Claude Science. Its reviewer child used
 real reviewer inspection tools (`repl` and `read_file`) after the Qwen execution
@@ -148,6 +156,11 @@ profile exposed a reviewer-specific allowlist. The reviewer did useful checks
 but was still slow and loop-prone, so the profile now includes an opt-in
 closeout guard that forwards only `submit_output` after several reviewer
 inspection results.
+
+Older exact-reply routing GIF:
+[`docs/assets/qwen-mtplx-annotated-demo.gif`](docs/assets/qwen-mtplx-annotated-demo.gif).
+It is still useful as a short model-picker/rendering capture, but it is not the
+primary workflow proof.
 
 The newer `2bc1ac85` Claude Science client was also tested in a temp copy. It
 still honored `ANTHROPIC_BASE_URL` and called the proxy through `/v1/models` and

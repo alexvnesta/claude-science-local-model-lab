@@ -742,6 +742,55 @@ class FakeOpenAIHandler(BaseHTTPRequestHandler):
                 },
             )
             return
+        if not payload.get("stream") and "xmlish unclosed arguments text tool call" in prompt:
+            self._json(
+                200,
+                {
+                    "choices": [
+                        {
+                            "message": {
+                                "role": "assistant",
+                                "content": (
+                                    "<tool_call>\n"
+                                    "<function=submit_output>\n"
+                                    '<parameter=arguments>\n{"verdict":"pass","findings":[]}\n'
+                                    "<parameter=name>\nsubmit_output\n"
+                                    "</function>\n"
+                                    "</tool_call>"
+                                ),
+                            },
+                            "finish_reason": "stop",
+                        }
+                    ],
+                    "usage": {"prompt_tokens": 4, "completion_tokens": 4},
+                },
+            )
+            return
+        if not payload.get("stream") and "preamble xmlish unclosed text tool call" in prompt:
+            self._json(
+                200,
+                {
+                    "choices": [
+                        {
+                            "message": {
+                                "role": "assistant",
+                                "content": (
+                                    "I will call the reviewer tool now.\n"
+                                    "<tool_call>\n"
+                                    "<function=submit_output>\n"
+                                    "<parameter=verdict>\npass\n"
+                                    "<parameter=findings>\n[]\n"
+                                    "</function>\n"
+                                    "</tool_call>"
+                                ),
+                            },
+                            "finish_reason": "stop",
+                        }
+                    ],
+                    "usage": {"prompt_tokens": 4, "completion_tokens": 4},
+                },
+            )
+            return
         if not payload.get("stream") and "xmlish text tool call" in prompt:
             self._json(
                 200,
@@ -1982,6 +2031,16 @@ def main() -> int:
         assert_text_tool_call_adapter(
             proxy_port,
             "xmlish text tool call",
+            include_extra_tools=True,
+        )
+        assert_text_tool_call_adapter(
+            proxy_port,
+            "xmlish unclosed arguments text tool call",
+            include_extra_tools=True,
+        )
+        assert_text_tool_call_adapter(
+            proxy_port,
+            "preamble xmlish unclosed text tool call",
             include_extra_tools=True,
         )
         assert_health_metrics(proxy_port)
