@@ -93,7 +93,7 @@ def build(capture_dir: Path, output: Path, contact: Path | None) -> None:
             "04_prompt_typed.png",
             "Local Qwen selected",
             "Claude Science is isolated on port 18765 and the model picker shows MTPLX Qwen 27B Local.",
-            [(232, 378, 870, 486), (638, 486, 868, 520)],
+            [(232, 378, 870, 523), (638, 486, 878, 523)],
         ),
         (
             "07_permission_card.png",
