@@ -29,12 +29,12 @@ still profile-based rather than a first-class provider abstraction.
    `schema_validation.py`, and `adapters/qwen.py`. Do this when tests can move
    with the code, not as a cosmetic shuffle.
 
-3. Add provider transport helpers.
+3. Continue provider transport cleanup.
 
-   OpenRouter and Ollama work through the OpenAI-compatible surface. The next
-   useful layer is generic upstream headers, provider-specific defaults,
-   clearer auth env names, and a small `doctor` command that verifies the
-   selected provider before launching Claude Science.
+   OpenRouter and Ollama now have provider smoke scripts, `UPSTREAM_*` aliases,
+   and a small `doctor` command. The next useful layer is a typed config file,
+   more provider-specific defaults, and optional live-provider smoke coverage
+   for additional OpenAI-compatible services.
 
 4. Keep request-shape routing separate from provider transport.
 
@@ -59,11 +59,11 @@ still profile-based rather than a first-class provider abstraction.
    The README should stay cloneable and short. Long frame IDs, app-path proof,
    and version archaeology should live in evidence docs or release notes.
 
-8. Broaden provider smoke tests.
+8. Broaden provider smoke tests beyond Ollama and OpenRouter.
 
-   Add optional live smoke scripts for Ollama and OpenRouter that run only when
-   the relevant local server or API key is present. Keep CI deterministic by
-   defaulting to fake upstreams.
+   Keep CI deterministic by defaulting to fake upstreams, but add optional live
+   smoke paths for vLLM, LM Studio, llama.cpp server, and other providers when
+   their local endpoints or API keys are present.
 
 ## Cleanup Principles
 

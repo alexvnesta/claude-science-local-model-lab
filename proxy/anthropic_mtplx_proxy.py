@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Small Anthropic Messages API proxy for an OpenAI-compatible MTPLX endpoint.
+"""Small Anthropic Messages API proxy for an OpenAI-compatible endpoint.
 
 This is intentionally dependency-free so the lab can run on a clean macOS
 Python. It implements the minimum Anthropic surface needed to test Claude Code
@@ -11,9 +11,9 @@ and Claude Science gateway behavior:
 - POST /v1/messages/count_tokens
 
 It converts Anthropic message/tool payloads into OpenAI chat-completions
-payloads, forwards them to MTPLX, then converts the response back into
-Anthropic's Messages shape. Streaming requests are bridged incrementally from
-OpenAI-compatible SSE chunks into Anthropic SSE events.
+payloads, forwards them to the configured upstream, then converts the response
+back into Anthropic's Messages shape. Streaming requests are bridged
+incrementally from OpenAI-compatible SSE chunks into Anthropic SSE events.
 """
 
 from __future__ import annotations
@@ -41,8 +41,22 @@ def _env(name: str, default: str) -> str:
     return value if value not in (None, "") else default
 
 
-DEFAULT_UPSTREAM_BASE = _env("MTPLX_OPENAI_BASE_URL", "http://127.0.0.1:8030/v1")
-DEFAULT_UPSTREAM_MODEL = _env("MTPLX_OPENAI_MODEL", "mtplx-qwen36-27b-optimized-quality")
+def _env_first(names: tuple[str, ...], default: str) -> str:
+    for name in names:
+        value = os.environ.get(name)
+        if value not in (None, ""):
+            return value
+    return default
+
+
+DEFAULT_UPSTREAM_BASE = _env_first(
+    ("UPSTREAM_OPENAI_BASE_URL", "MTPLX_OPENAI_BASE_URL"),
+    "http://127.0.0.1:8030/v1",
+)
+DEFAULT_UPSTREAM_MODEL = _env_first(
+    ("UPSTREAM_OPENAI_MODEL", "MTPLX_OPENAI_MODEL"),
+    "mtplx-qwen36-27b-optimized-quality",
+)
 DEFAULT_TIMEOUT = float(_env("PROXY_REQUEST_TIMEOUT", "180"))
 DEFAULT_MAX_TOKENS_CAP = int(_env("PROXY_MAX_TOKENS_CAP", "4096"))
 DEFAULT_UPSTREAM_RETRIES = int(_env("PROXY_UPSTREAM_RETRIES", "2"))
@@ -57,11 +71,24 @@ DEFAULT_PARSE_TEXT_TOOL_CALLS = _env("PROXY_PARSE_TEXT_TOOL_CALLS", "0")
 DEFAULT_SCHEMA_LOG_PATH = _env("PROXY_SCHEMA_LOG_PATH", "")
 DEFAULT_HARNESS_TOOLS = _env("PROXY_HARNESS_TOOLS", "submit_output")
 DEFAULT_CLAUDE_SCIENCE_COMPAT = _env("PROXY_CLAUDE_SCIENCE_COMPAT", "0")
+DEFAULT_MTPLX_AVOID_BACKGROUND_BYPASS = _env("PROXY_MTPLX_AVOID_BACKGROUND_BYPASS", "0")
+DEFAULT_MTPLX_BACKGROUND_MAX_TOKENS = int(_env("PROXY_MTPLX_BACKGROUND_MAX_TOKENS", "48"))
+DEFAULT_MTPLX_BACKGROUND_NO_HISTORY_MAX_CHARS = int(
+    _env("PROXY_MTPLX_BACKGROUND_NO_HISTORY_MAX_CHARS", "4096")
+)
 DEFAULT_ADVERTISED_MODELS = _env(
     "PROXY_ADVERTISED_MODELS",
     f"claude-opus-4-8,{DEFAULT_UPSTREAM_MODEL}",
 )
 DEFAULT_MODEL_DISPLAY_NAMES = _env("PROXY_MODEL_DISPLAY_NAMES", "")
+DEFAULT_UPSTREAM_HTTP_REFERER = _env_first(
+    ("UPSTREAM_HTTP_REFERER", "OPENROUTER_HTTP_REFERER"),
+    "",
+)
+DEFAULT_UPSTREAM_APP_TITLE = _env_first(
+    ("UPSTREAM_APP_TITLE", "OPENROUTER_APP_TITLE"),
+    "",
+)
 
 
 class ProxyConfig:
@@ -83,6 +110,9 @@ class ProxyConfig:
         schema_log_path: str,
         harness_tools: list[str],
         claude_science_compat: bool,
+        mtplx_avoid_background_bypass: bool,
+        mtplx_background_max_tokens: int,
+        mtplx_background_no_history_max_chars: int,
         advertised_models: list[str],
         model_display_names: dict[str, str],
     ) -> None:
@@ -102,6 +132,9 @@ class ProxyConfig:
         self.schema_log_path = schema_log_path
         self.harness_tools = harness_tools
         self.claude_science_compat = claude_science_compat
+        self.mtplx_avoid_background_bypass = mtplx_avoid_background_bypass
+        self.mtplx_background_max_tokens = mtplx_background_max_tokens
+        self.mtplx_background_no_history_max_chars = mtplx_background_no_history_max_chars
         self.advertised_models = advertised_models
         self.model_display_names = model_display_names
 
@@ -123,6 +156,9 @@ CONFIG = ProxyConfig(
     "",
     [],
     False,
+    False,
+    48,
+    4096,
     [],
     {},
 )
@@ -212,6 +248,9 @@ CONFIG.parse_text_tool_calls = parse_bool(DEFAULT_PARSE_TEXT_TOOL_CALLS)
 CONFIG.schema_log_path = DEFAULT_SCHEMA_LOG_PATH
 CONFIG.harness_tools = parse_csv(DEFAULT_HARNESS_TOOLS)
 CONFIG.claude_science_compat = parse_bool(DEFAULT_CLAUDE_SCIENCE_COMPAT)
+CONFIG.mtplx_avoid_background_bypass = parse_bool(DEFAULT_MTPLX_AVOID_BACKGROUND_BYPASS)
+CONFIG.mtplx_background_max_tokens = DEFAULT_MTPLX_BACKGROUND_MAX_TOKENS
+CONFIG.mtplx_background_no_history_max_chars = DEFAULT_MTPLX_BACKGROUND_NO_HISTORY_MAX_CHARS
 CONFIG.model_display_names = parse_model_display_names(DEFAULT_MODEL_DISPLAY_NAMES)
 
 
@@ -333,6 +372,65 @@ def latest_user_text(payload: dict[str, Any]) -> str:
         if isinstance(message, dict) and message.get("role") == "user":
             return user_text_without_tool_results(message)
     return ""
+
+
+def openai_message_roles(request: dict[str, Any]) -> list[str]:
+    roles: list[str] = []
+    for message in request.get("messages") or []:
+        if isinstance(message, dict):
+            role = message.get("role")
+            if role:
+                roles.append(str(role))
+    return roles
+
+
+def openai_messages_text_len(request: dict[str, Any]) -> int:
+    total = 0
+    for message in request.get("messages") or []:
+        if isinstance(message, dict):
+            total += len(block_text(message.get("content")))
+    return total
+
+
+def mtplx_background_risk(request: dict[str, Any]) -> dict[str, Any]:
+    try:
+        max_tokens = int(request.get("max_tokens") or 0)
+    except (TypeError, ValueError):
+        max_tokens = 0
+    roles = openai_message_roles(request)
+    text_chars = openai_messages_text_len(request)
+    small_max_tokens = max_tokens <= CONFIG.mtplx_background_max_tokens
+    no_history = roles in (["system", "user"], ["developer", "user"])
+    short_no_history = (
+        no_history
+        and text_chars <= CONFIG.mtplx_background_no_history_max_chars
+    )
+    has_system_prompt = any(role in {"system", "developer"} for role in roles)
+    reasons: list[str] = []
+    if small_max_tokens:
+        reasons.append("small_max_tokens")
+    if short_no_history:
+        reasons.append("short_no_history")
+    if small_max_tokens and has_system_prompt:
+        reasons.append("system_mismatch_possible")
+    if request.get("tools"):
+        reasons.append("tools_present")
+    return {
+        "risk": bool(small_max_tokens and (short_no_history or has_system_prompt)),
+        "max_tokens": max_tokens,
+        "roles": roles,
+        "text_chars": text_chars,
+        "reasons": reasons,
+    }
+
+
+def apply_mtplx_background_bypass_guard(request: dict[str, Any]) -> dict[str, Any]:
+    risk = mtplx_background_risk(request)
+    if CONFIG.mtplx_avoid_background_bypass and risk["risk"]:
+        floor = CONFIG.mtplx_background_max_tokens + 1
+        request["max_tokens"] = max(int(request.get("max_tokens") or 0), floor)
+        risk["adjusted_max_tokens"] = request["max_tokens"]
+    return risk
 
 
 def assistant_message_from_blocks(message: dict[str, Any]) -> dict[str, Any]:
@@ -1149,6 +1247,21 @@ def openai_to_anthropic(
     }
 
 
+def upstream_request_headers(*, stream: bool = False) -> dict[str, str]:
+    api_key = _env_first(("UPSTREAM_API_KEY", "MTPLX_API_KEY"), "local-mtplx")
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {api_key}",
+    }
+    if stream:
+        headers["Accept"] = "text/event-stream"
+    if DEFAULT_UPSTREAM_HTTP_REFERER:
+        headers["HTTP-Referer"] = DEFAULT_UPSTREAM_HTTP_REFERER
+    if DEFAULT_UPSTREAM_APP_TITLE:
+        headers["X-OpenRouter-Title"] = DEFAULT_UPSTREAM_APP_TITLE
+    return headers
+
+
 def call_openai_chat(request: dict[str, Any]) -> dict[str, Any]:
     request = dict(request)
     request["stream"] = False
@@ -1160,10 +1273,7 @@ def call_openai_chat(request: dict[str, Any]) -> dict[str, Any]:
         http_request = urllib.request.Request(
             url,
             data=body,
-            headers={
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {_env('MTPLX_API_KEY', 'local-mtplx')}",
-            },
+            headers=upstream_request_headers(),
             method="POST",
         )
         try:
@@ -1196,11 +1306,7 @@ def open_openai_stream(request: dict[str, Any]) -> Any:
         http_request = urllib.request.Request(
             url,
             data=body,
-            headers={
-                "Content-Type": "application/json",
-                "Accept": "text/event-stream",
-                "Authorization": f"Bearer {_env('MTPLX_API_KEY', 'local-mtplx')}",
-            },
+            headers=upstream_request_headers(stream=True),
             method="POST",
         )
         try:
@@ -1610,6 +1716,9 @@ class Handler(BaseHTTPRequestHandler):
                     "schema_log_path": CONFIG.schema_log_path,
                     "harness_tools": CONFIG.harness_tools,
                     "claude_science_compat": CONFIG.claude_science_compat,
+                    "mtplx_avoid_background_bypass": CONFIG.mtplx_avoid_background_bypass,
+                    "mtplx_background_max_tokens": CONFIG.mtplx_background_max_tokens,
+                    "mtplx_background_no_history_max_chars": CONFIG.mtplx_background_no_history_max_chars,
                     "model_display_names": CONFIG.model_display_names,
                 },
             )
@@ -1658,6 +1767,7 @@ class Handler(BaseHTTPRequestHandler):
             stream_requested = bool(payload.get("stream"))
             log_tool_schema_inventory(payload)
             request = anthropic_to_openai(payload, stream=stream_requested)
+            mtplx_background = apply_mtplx_background_bypass_guard(request)
             schemas = tool_schema_map(payload, allowlist=CONFIG.tool_allowlist)
             requested_max_tokens = payload.get("max_tokens")
             request_kind = classify_request_kind(payload, request)
@@ -1670,7 +1780,11 @@ class Handler(BaseHTTPRequestHandler):
                 f"upstream_tools={len(request.get('tools') or [])} "
                 f"tool_choice={request.get('tool_choice')} "
                 f"requested_max_tokens={requested_max_tokens} "
-                f"upstream_max_tokens={request.get('max_tokens')}"
+                f"upstream_max_tokens={request.get('max_tokens')} "
+                f"mtplx_background_risk={mtplx_background['risk']} "
+                f"mtplx_background_reasons={mtplx_background['reasons']} "
+                f"mtplx_roles={mtplx_background['roles']} "
+                f"mtplx_text_chars={mtplx_background['text_chars']}"
             )
             if stream_requested and CONFIG.stream_mode == "direct":
                 stream_openai_to_anthropic(
@@ -1788,6 +1902,26 @@ def main() -> int:
         help="Emit Claude Science execution-compatible tool_use metadata.",
     )
     parser.add_argument(
+        "--mtplx-avoid-background-bypass",
+        default="1" if CONFIG.mtplx_avoid_background_bypass else "0",
+        help=(
+            "When enabled, raise small MTPLX background-risk requests above the "
+            "MTPLX background cutoff so they queue instead of returning session_busy."
+        ),
+    )
+    parser.add_argument(
+        "--mtplx-background-max-tokens",
+        type=int,
+        default=CONFIG.mtplx_background_max_tokens,
+        help="MTPLX background classifier max_tokens cutoff; default matches MTPLX's 48-token cutoff.",
+    )
+    parser.add_argument(
+        "--mtplx-background-no-history-max-chars",
+        type=int,
+        default=CONFIG.mtplx_background_no_history_max_chars,
+        help="MTPLX short no-history background classifier character cutoff.",
+    )
+    parser.add_argument(
         "--advertised-models",
         default=",".join(CONFIG.advertised_models),
         help="Comma-separated model ids to expose via /v1/models.",
@@ -1818,6 +1952,9 @@ def main() -> int:
     CONFIG.schema_log_path = args.schema_log_path
     CONFIG.harness_tools = parse_csv(args.harness_tools)
     CONFIG.claude_science_compat = parse_bool(args.claude_science_compat)
+    CONFIG.mtplx_avoid_background_bypass = parse_bool(args.mtplx_avoid_background_bypass)
+    CONFIG.mtplx_background_max_tokens = args.mtplx_background_max_tokens
+    CONFIG.mtplx_background_no_history_max_chars = args.mtplx_background_no_history_max_chars
     CONFIG.advertised_models = parse_csv(args.advertised_models)
     if CONFIG.upstream_model not in CONFIG.advertised_models:
         CONFIG.advertised_models.append(CONFIG.upstream_model)
@@ -1839,6 +1976,9 @@ def main() -> int:
         f"schema_log_path={CONFIG.schema_log_path or '<disabled>'}; "
         f"harness_tools={CONFIG.harness_tools}; "
         f"claude_science_compat={CONFIG.claude_science_compat}; "
+        f"mtplx_avoid_background_bypass={CONFIG.mtplx_avoid_background_bypass}; "
+        f"mtplx_background_max_tokens={CONFIG.mtplx_background_max_tokens}; "
+        f"mtplx_background_no_history_max_chars={CONFIG.mtplx_background_no_history_max_chars}; "
         f"advertised_models={CONFIG.advertised_models}; "
         f"model_display_names={CONFIG.model_display_names}"
     )

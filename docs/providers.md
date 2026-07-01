@@ -4,11 +4,16 @@ The proxy forwards requests to an OpenAI-compatible
 `/v1/chat/completions` endpoint. MTPLX/Qwen was the first working proof, but it
 is not required.
 
-The legacy env names mean:
+The preferred profile env names are:
 
-- `MTPLX_OPENAI_BASE_URL`: upstream OpenAI-compatible base URL.
-- `MTPLX_OPENAI_MODEL`: upstream model slug.
-- `MTPLX_API_KEY`: upstream bearer token. Local servers often ignore it.
+- `UPSTREAM_OPENAI_BASE_URL`: upstream OpenAI-compatible base URL.
+- `UPSTREAM_OPENAI_MODEL`: upstream model slug.
+- `UPSTREAM_API_KEY`: upstream bearer token. Local servers often ignore it.
+- `UPSTREAM_HTTP_REFERER`: optional OpenRouter attribution URL.
+- `UPSTREAM_APP_TITLE`: optional OpenRouter app title.
+
+The older `MTPLX_OPENAI_BASE_URL`, `MTPLX_OPENAI_MODEL`, and `MTPLX_API_KEY`
+names are still supported for compatibility.
 
 ## Ollama
 
@@ -29,6 +34,12 @@ Start this proxy with the Ollama profile:
 OLLAMA_MODEL=qwen3:8b \
 PROXY_PROFILE=profiles/ollama.env.example \
 ./scripts/start-proxy-detached.sh
+```
+
+Or run a provider-only smoke:
+
+```bash
+OLLAMA_MODEL=qwen3:8b ./scripts/smoke-ollama.sh
 ```
 
 If the model does not reliably produce tool calls, switch to prose-only mode:
@@ -60,6 +71,13 @@ PROXY_PROFILE=profiles/openrouter.env.example \
 ./scripts/start-proxy-detached.sh
 ```
 
+For a provider-only smoke, either set `OPENROUTER_MODEL` or let the script pick
+a `:free` model from the OpenRouter catalog:
+
+```bash
+OPENROUTER_ENV_FILE=/path/to/ignored/.env ./scripts/smoke-openrouter.sh
+```
+
 Remote models vary widely in tool-call behavior. Start with short non-tool
 prompts, then try a narrow `PROXY_TOOL_ALLOWLIST` before exposing the full
 Claude Science tool inventory.
@@ -79,6 +97,7 @@ Provider checklist:
 
 - Confirm the base URL should end before `/chat/completions`.
 - Confirm the model slug exactly matches the upstream provider.
+- Run `PROXY_PROFILE=... ./scripts/doctor.sh` before live app debugging.
 - Keep `PROXY_MAX_TOKENS_CAP` modest until latency is understood.
 - Use `PROXY_STREAM_MODE=direct` when upstream streaming is reliable.
 - Use `PROXY_STREAM_MODE=buffered` only when direct streaming breaks the app

@@ -105,8 +105,9 @@ cp profiles/openai-compatible.env.example profiles/local.env
 Edit:
 
 ```bash
-MTPLX_OPENAI_BASE_URL=http://127.0.0.1:11434/v1
-MTPLX_OPENAI_MODEL=gemma-or-qwen-or-your-model
+UPSTREAM_OPENAI_BASE_URL=http://127.0.0.1:11434/v1
+UPSTREAM_OPENAI_MODEL=gemma-or-qwen-or-your-model
+UPSTREAM_API_KEY=local-placeholder
 PROXY_ADVERTISED_MODELS=claude-opus-4-8,gemma-or-qwen-or-your-model
 PROXY_MODEL_DISPLAY_NAMES='{"claude-opus-4-8":"Gemma Local"}'
 PROXY_MAX_TOKENS_CAP=4096

@@ -139,9 +139,14 @@ Expected:
 - The Claude Science UI renders `LOCAL MODEL OK`.
 - `_local/proxy.log` shows `POST /v1/messages` for the same interaction.
 - The proxy log shows the upstream model, requested token count, capped token
-  count, request `kind`, and upstream completion time.
-- For MTPLX, transient `session_busy` log lines are acceptable if they retry and
-  later complete. Persistent `session_busy` means the local backend is saturated.
+  count, request `kind`, MTPLX background-risk fields, and upstream completion
+  time.
+- For MTPLX, `session_busy` means MTPLX classified a small helper/reviewer-style
+  call as background while foreground generation was active or queued. With
+  `PROXY_MTPLX_AVOID_BACKGROUND_BYPASS=1`, risk-shaped calls are raised above
+  MTPLX's 48-token background cutoff so they queue instead of returning an
+  immediate 503. Persistent `session_busy` after that points to a non-guarded
+  background source or a saturated backend.
 
 ## 6. Bounded Analysis Proof
 
@@ -242,6 +247,10 @@ then:
 - Disable verifier for long foreground experiments when isolating main-agent
   behavior.
 - Avoid running old processing frames concurrently with fresh probes.
+- If `session_busy` appears, inspect `_local/proxy.log` for
+  `mtplx_background_risk=True`, `mtplx_background_reasons`, and
+  `upstream_max_tokens=49`. A risky call still going upstream at `<=48` means the
+  guard is not enabled for that proxy process.
 - Treat successful direct proxy calls as formatting evidence only unless the
   isolated app database shows persisted `frame_messages`, `execution_log`, and
   artifact rows.

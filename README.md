@@ -88,8 +88,16 @@ PROXY_PROFILE=profiles/openrouter.env.example \
 Smoke test the proxy:
 
 ```bash
+PROXY_PROFILE=profiles/mtplx-qwen.env.example ./scripts/doctor.sh
 ./scripts/smoke-proxy.sh
 ./scripts/test-streaming-proxy.sh
+```
+
+Provider-only smoke tests are available without launching Claude Science:
+
+```bash
+OPENROUTER_ENV_FILE=/path/to/ignored/.env ./scripts/smoke-openrouter.sh
+OLLAMA_MODEL=qwen3:8b ./scripts/smoke-ollama.sh
 ```
 
 Launch the isolated Claude Science copy:
@@ -106,6 +114,12 @@ For this gateway test, reply with exactly LOCAL MODEL OK. Do not use tools.
 ```
 
 If routing is local, `_local/proxy.log` will show `POST /v1/messages`.
+
+MTPLX note: the Qwen profiles enable `PROXY_MTPLX_AVOID_BACKGROUND_BYPASS=1`.
+This raises small Claude Science helper/reviewer calls above MTPLX's 48-token
+background cutoff when their request shape would otherwise return an immediate
+`session_busy` during foreground generation. The proxy log records
+`mtplx_background_risk`, reasons, roles, and the adjusted upstream token count.
 
 ## Current Proof
 
@@ -142,6 +156,7 @@ For detailed checks and evidence, see
 ```bash
 python -m pip install -r requirements-dev.txt
 python -m pytest tests
+./scripts/test-streaming-proxy.sh
 ```
 
 Credit and license notes are in [`NOTICE.md`](NOTICE.md) and

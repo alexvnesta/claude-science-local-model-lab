@@ -30,10 +30,12 @@ repo cloneable, safe, and boring to audit.
 - `docs/why-this-proxy.md` explains the Claude Science-specific value compared
   with Claude Code proxy prior art.
 
-The env names `MTPLX_OPENAI_BASE_URL`, `MTPLX_OPENAI_MODEL`, and
-`MTPLX_API_KEY` are legacy names for the upstream OpenAI-compatible endpoint,
-model, and bearer token. Profiles may point them at Ollama, OpenRouter, vLLM,
-LM Studio, llama.cpp server, or another compatible backend.
+The preferred env names are `UPSTREAM_OPENAI_BASE_URL`,
+`UPSTREAM_OPENAI_MODEL`, and `UPSTREAM_API_KEY`. The older
+`MTPLX_OPENAI_BASE_URL`, `MTPLX_OPENAI_MODEL`, and `MTPLX_API_KEY` names are
+still supported for compatibility. Profiles may point the upstream values at
+Ollama, OpenRouter, vLLM, LM Studio, llama.cpp server, or another compatible
+backend.
 
 ## How To Work Here
 
@@ -58,6 +60,10 @@ python3 -m pytest tests
 ./scripts/test-streaming-proxy.sh
 git diff --check
 ```
+
+For provider checks, use `./scripts/doctor.sh`,
+`./scripts/smoke-openrouter.sh`, or `./scripts/smoke-ollama.sh`. Those scripts
+may source ignored env files, but they must not print secret values.
 
 For a live Claude Science run, follow `docs/verification-checklist.md`. A good
 public claim needs at least proxy logs showing `/v1/messages` traffic and local

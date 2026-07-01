@@ -6,6 +6,7 @@ from __future__ import annotations
 import contextlib
 import errno
 import json
+import os
 import socket
 import subprocess
 import sys
@@ -58,6 +59,49 @@ class FakeOpenAIHandler(BaseHTTPRequestHandler):
         payload = json.loads(self.rfile.read(length).decode("utf-8"))
         messages = payload.get("messages") or []
         prompt = json.dumps(messages)
+        if not payload.get("stream") and "check mtplx background guard" in prompt:
+            self._json(
+                200,
+                {
+                    "choices": [
+                        {
+                            "message": {
+                                "role": "assistant",
+                                "content": json.dumps(
+                                    {
+                                        "max_tokens": payload.get("max_tokens"),
+                                        "roles": [
+                                            message.get("role")
+                                            for message in messages
+                                            if isinstance(message, dict)
+                                        ],
+                                    }
+                                ),
+                            },
+                            "finish_reason": "stop",
+                        }
+                    ],
+                    "usage": {"prompt_tokens": 4, "completion_tokens": 2},
+                },
+            )
+            return
+        if not payload.get("stream") and "check upstream api key alias" in prompt:
+            self._json(
+                200,
+                {
+                    "choices": [
+                        {
+                            "message": {
+                                "role": "assistant",
+                                "content": self.headers.get("Authorization", ""),
+                            },
+                            "finish_reason": "stop",
+                        }
+                    ],
+                    "usage": {"prompt_tokens": 4, "completion_tokens": 2},
+                },
+            )
+            return
         if not payload.get("stream") and "text json tool call" in prompt:
             self._json(
                 200,
@@ -1227,6 +1271,39 @@ def assert_custom_model_display_names(proxy_port: int) -> None:
     assert model["display_name"] == "MTPLX Qwen 27B Local", model
 
 
+def assert_mtplx_background_guard(proxy_port: int) -> None:
+    raw = post_json(
+        f"http://127.0.0.1:{proxy_port}/v1/messages",
+        {
+            "model": "claude-opus-4-8",
+            "system": "Tiny helper system prompt.",
+            "max_tokens": 24,
+            "messages": [{"role": "user", "content": "check mtplx background guard"}],
+        },
+    )
+    payload = json.loads(raw)
+    content = json.loads(payload["content"][0]["text"])
+    assert content["max_tokens"] == 49, payload
+    assert content["roles"] == ["system", "user"], payload
+
+
+def assert_upstream_env_aliases(proxy_port: int) -> None:
+    payload = get_json(f"http://127.0.0.1:{proxy_port}/v1/models?limit=1000")
+    ids = [item["id"] for item in payload["data"]]
+    assert ids == ["claude-opus-4-8", "fake-model"], payload
+
+    raw = post_json(
+        f"http://127.0.0.1:{proxy_port}/v1/messages",
+        {
+            "model": "claude-opus-4-8",
+            "max_tokens": 24,
+            "messages": [{"role": "user", "content": "check upstream api key alias"}],
+        },
+    )
+    message = json.loads(raw)
+    assert message["content"][0]["text"] == "Bearer alias-test-key", message
+
+
 def start_proxy_process(
     fake_port: int,
     proxy_port: int,
@@ -1256,6 +1333,38 @@ def start_proxy_process(
     return subprocess.Popen(
         args,
         cwd=ROOT,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+
+
+def start_proxy_env_alias_process(
+    fake_port: int,
+    proxy_port: int,
+) -> subprocess.Popen[bytes]:
+    args = [
+        sys.executable,
+        str(ROOT / "proxy" / "anthropic_mtplx_proxy.py"),
+        "--host",
+        "127.0.0.1",
+        "--port",
+        str(proxy_port),
+        "--parse-text-tool-calls",
+        "1",
+        "--tool-mode",
+        "drop",
+    ]
+    env = os.environ.copy()
+    env.pop("MTPLX_OPENAI_BASE_URL", None)
+    env.pop("MTPLX_OPENAI_MODEL", None)
+    env.pop("MTPLX_API_KEY", None)
+    env["UPSTREAM_OPENAI_BASE_URL"] = f"http://127.0.0.1:{fake_port}/v1"
+    env["UPSTREAM_OPENAI_MODEL"] = "fake-model"
+    env["UPSTREAM_API_KEY"] = "alias-test-key"
+    return subprocess.Popen(
+        args,
+        cwd=ROOT,
+        env=env,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
     )
@@ -1315,6 +1424,18 @@ def main() -> int:
         except subprocess.TimeoutExpired:
             proc.kill()
 
+    alias_proxy_port = free_port()
+    alias_proc = start_proxy_env_alias_process(fake_port, alias_proxy_port)
+    try:
+        wait_for_proxy(alias_proxy_port, alias_proc)
+        assert_upstream_env_aliases(alias_proxy_port)
+    finally:
+        alias_proc.terminate()
+        try:
+            alias_proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            alias_proc.kill()
+
     display_proxy_port = free_port()
     display_proc = start_proxy_process(
         fake_port,
@@ -1334,6 +1455,23 @@ def main() -> int:
             display_proc.wait(timeout=5)
         except subprocess.TimeoutExpired:
             display_proc.kill()
+
+    mtplx_guard_proxy_port = free_port()
+    mtplx_guard_proc = start_proxy_process(
+        fake_port,
+        mtplx_guard_proxy_port,
+        "drop",
+        ["--mtplx-avoid-background-bypass", "1"],
+    )
+    try:
+        wait_for_proxy(mtplx_guard_proxy_port, mtplx_guard_proc)
+        assert_mtplx_background_guard(mtplx_guard_proxy_port)
+    finally:
+        mtplx_guard_proc.terminate()
+        try:
+            mtplx_guard_proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            mtplx_guard_proc.kill()
 
     pass_proxy_port = free_port()
     pass_proc = start_proxy_process(fake_port, pass_proxy_port, "pass")
