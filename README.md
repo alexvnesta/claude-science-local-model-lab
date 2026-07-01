@@ -143,6 +143,13 @@ conversation-scoped Python permission, a reviewer finding, Qwen's corrective
 artifact creation, a final reviewer pass, and the generated TP53 TCGA-BRCA
 plot opened in split view.
 
+Public source notebook for the TP53 analysis:
+[`examples/tp53_brca_xena_analysis.ipynb`](examples/tp53_brca_xena_analysis.ipynb).
+
+<img src="docs/assets/tp53-notebook-source-1.png" alt="Notebook source for loading TCGA-BRCA TP53 expression data" width="900">
+
+<img src="docs/assets/tp53-notebook-source-2.png" alt="Notebook source for plotting TP53 expression and writing artifacts" width="900">
+
 The most user-legible local Qwen workflow proof is frame
 `0b03da82-efe5-4440-be56-651d7053d1fb`: Qwen 27B downloaded the TCGA-BRCA Xena
 matrix, extracted TP53 expression for primary tumor and normal samples, saved
