@@ -2,6 +2,13 @@ _local/
 *.log
 *.pid
 __pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+.venv/
 .DS_Store
 .env
-
+profiles/*.env
+*.sqlite
+*.db
+*.jar

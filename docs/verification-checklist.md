@@ -44,13 +44,16 @@ PROXY_PROFILE=profiles/local.env ./scripts/start-proxy-detached.sh
 Expected:
 
 - `/healthz` returns the configured upstream and advertised model list.
-- `/healthz` shows the intended `stream_mode`, `tool_mode`, and
-  `parse_text_tool_calls` values.
+- `/healthz` shows the intended `stream_mode`, `tool_mode`,
+  `tool_allowlist`, `tool_validation`, `tool_repair`,
+  `force_mentioned_tool`, `parse_text_tool_calls`, and optional
+  `schema_log_path` values.
+- `/healthz` shows `harness_tools`, normally `["submit_output"]`.
 - `/v1/messages/count_tokens` returns an `input_tokens` value.
 - `/v1/messages` returns a message containing `mtplx proxy ok`.
-- `./scripts/test-streaming-proxy.sh` passes streamed text, streamed tool-call
-  deltas, full-JSON fallback, finite SSE close, and Qwen text-tool-call adapter
-  cases.
+- `./scripts/test-streaming-proxy.sh` passes streamed text, streamed valid
+  tool-call deltas, invalid tool-call filtering, full-JSON fallback, finite SSE
+  close, and Qwen text-tool-call adapter cases.
 
 ## 4. Launch Isolated Claude Science
 
@@ -66,6 +69,34 @@ In another terminal:
 
 Open the returned URL.
 
+For scripted local-app verification without browser automation, submit a
+request through the authenticated app API:
+
+```bash
+scripts/submit-local-request.py \
+  --project-id <project-id> \
+  "API path probe. Use search_skills once to search for figure-composer. After the tool result, answer with marker API_KIND_SEARCH_OK."
+```
+
+The helper obtains a short-lived login cookie through `claude-science url`,
+posts to `/api/projects/{project_id}/request`, and prints the accepted
+`root_frame_id`.
+
+When Claude Science pauses on a local execution permission card, approve it
+with conversation scope, matching the UI path "Permissions -> Allow -> for this
+conversation":
+
+```bash
+scripts/resolve-input-request.py \
+  --frame-id <root_frame_id> \
+  --scope conversation
+```
+
+The helper defaults to `--scope conversation`. Use `--scope once` only when you
+want to mimic a single-use approval. A correct approval should clear
+`output_data.pending_input_requests` and create an `execution_log` row for
+`python`/local execution.
+
 ## 5. Interactive UI Proof
 
 Send:
@@ -79,7 +110,7 @@ Expected:
 - The Claude Science UI renders `LOCAL MODEL OK`.
 - `_local/proxy.log` shows `POST /v1/messages` for the same interaction.
 - The proxy log shows the upstream model, requested token count, capped token
-  count, and upstream completion time.
+  count, request `kind`, and upstream completion time.
 - For MTPLX, transient `session_busy` log lines are acceptable if they retry and
   later complete. Persistent `session_busy` means the local backend is saturated.
 
@@ -106,6 +137,40 @@ Expected:
   limitation or draft plan. They should not contain `<anonymous_function>`,
   `<tool_call>`, XML function tags, or claims that searches/files/code/artifacts
   were actually executed.
+- In `PROXY_TOOL_MODE=pass` with `PROXY_TOOL_VALIDATION=schema`, tool-heavy
+  prompts should forward Claude Science tool schemas upstream, but returned tool
+  calls should be emitted only when they use an offered tool name and JSON-object
+  arguments that satisfy the offered schema. Unknown tools, malformed JSON args,
+  and missing required fields should be filtered rather than wrapped as
+  executable `tool_use`.
+- With `PROXY_TOOL_REPAIR=metadata`, missing `human_description` may be filled
+  for Qwen-generated calls. Missing semantic fields such as `command`, `code`,
+  or `file_path` should still be filtered.
+- If full-tool forwarding stalls, restart with
+  `profiles/mtplx-qwen-tool-probe.env.example` and verify a single allowlisted
+  tool loop before broadening the allowlist.
+- For execution-tool probes, restart with
+  `profiles/mtplx-qwen-execution-probe.env.example` and begin with explicit,
+  single-tool prompts for `python` or `save_artifacts`. Direct proxy success
+  means Qwen formatted the tool call; app-side success additionally requires a
+  persisted Claude Science `tool_result` and, for artifacts, a saved artifact
+  version.
+- New app-side execution proofs should use the compatibility profile so tool
+  ids are normalized to `toolu_...` and emitted tool-use blocks include
+  `caller: {"type":"direct"}`. Older pre-compat frames with OpenAI-style
+  `call_...` ids can still clear the permission card and run Python, but they
+  are poor recovery targets for artifact-loop verification.
+- With `PROXY_FORCE_MENTIONED_TOOL=1`, explicit user text such as "use the
+  skill tool" or "call python to create..." should show a named upstream
+  `tool_choice` in direct probes and a real `tool_use` in the persisted Claude
+  Science frame. If multiple tools are mentioned, the proxy chooses the earliest
+  explicit tool mention, not the longest tool name.
+- Reviewer/harness calls should log `kind=harness`, forward `submit_output`
+  even if it is absent from `PROXY_TOOL_ALLOWLIST`, and force a named upstream
+  `tool_choice` when `submit_output` is the only forwarded tool.
+- When `PROXY_SCHEMA_LOG_PATH` is set, `_local/tool-schema-capture.jsonl` should
+  receive one redacted inventory per tool-offering request. Keep this file out
+  of git and use it to tune provider-specific tool adapters.
 - Reviewer status may still be model-specific. If it is inconclusive, inspect
   the reviewer message shape and add a narrow adapter plus a regression test.
   Observed Qwen reviewer shapes include markdown-wrapped function text, fenced
@@ -115,6 +180,42 @@ Expected:
   `tool_result`, and reviewer-frame `structured_output` in the isolated
   SQLite database. A clean pass may not create a row in `verification_checks`;
   the reviewer frame's `output_data.structured_output` is the durable evidence.
+- Strong app-path proof should show both the foreground frame and reviewer child
+  completing. Example known-good frame:
+  `a160c85e-4258-40cc-9196-dd43a9e9d565` called `search_skills`, received a
+  real `tool_result`, answered `API_KIND_SEARCH_OK`, and reviewer child
+  `33efd0d8-5f9b-4ae0-810b-4db8dd5b96cf` called `submit_output` successfully.
+- Known-good execution/artifact frame:
+  `b1ff2cd4-dac4-4417-96f1-6cd39c491dbc` emitted compat `python` and
+  `save_artifacts` tool uses, Python wrote `qwen_probe_compat.png` and
+  `qwen_probe_compat.txt`, Claude Science saved both as artifacts, and reviewer
+  child `831a0f6c-d2ed-4438-94cd-6ed6f3c8f5bf` completed with
+  `structured_output: {"findings":[]}`.
+- Permission-scope proof:
+  `6b100da8-0737-4232-b106-c15b347273cb` originally paused with a local
+  `python` permission card. Resolving it with `scope: "conversation"` cleared
+  `pending_input_requests` and created an `execution_log` row writing
+  `qwen_probe.png` and `qwen_probe.txt`.
+
+## 6.1 Streaming Caveat For Long Tool Calls
+
+`PROXY_STREAM_MODE=buffered` is the known-good mode for short MTPLX/Qwen tool
+loops because Claude Science accepts the final Anthropic SSE shape. However, it
+does not emit incremental events while waiting for the upstream response. Long
+Qwen generations around one to two minutes can cause Claude Science to
+disconnect before the proxy returns the completed response.
+
+`PROXY_STREAM_MODE=direct` currently does not provide a verified app-side tool
+loop for MTPLX/Qwen. It needs more work before it replaces buffered mode. Until
+then:
+
+- Keep execution probes short and focused.
+- Disable verifier for long foreground experiments when isolating main-agent
+  behavior.
+- Avoid running old processing frames concurrently with fresh probes.
+- Treat successful direct proxy calls as formatting evidence only unless the
+  isolated app database shows persisted `frame_messages`, `execution_log`, and
+  artifact rows.
 
 ## 7. Record Evidence
 

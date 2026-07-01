@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import contextlib
+import errno
 import json
 import socket
 import subprocess
@@ -91,6 +92,276 @@ class FakeOpenAIHandler(BaseHTTPRequestHandler):
                                 "content": "guard present" if guard_present else "guard missing",
                             },
                             "finish_reason": "stop",
+                        }
+                    ],
+                    "usage": {"prompt_tokens": 4, "completion_tokens": 2},
+                },
+            )
+            return
+        if not payload.get("stream") and "mtplx wrapper text" in prompt:
+            self._json(
+                200,
+                {
+                    "choices": [
+                        {
+                            "message": {
+                                "role": "assistant",
+                                "content": "<mtplx_final_answer>wrapper stripped</mtplx_final_answer>",
+                            },
+                            "finish_reason": "stop",
+                        }
+                    ],
+                    "usage": {"prompt_tokens": 4, "completion_tokens": 2},
+                },
+            )
+            return
+        if not payload.get("stream") and "check tool choice required" in prompt:
+            self._json(
+                200,
+                {
+                    "choices": [
+                        {
+                            "message": {
+                                "role": "assistant",
+                                "content": json.dumps(
+                                    {
+                                        "tool_choice": payload.get("tool_choice"),
+                                        "tool_count": len(payload.get("tools") or []),
+                                    }
+                                ),
+                            },
+                            "finish_reason": "stop",
+                        }
+                    ],
+                    "usage": {"prompt_tokens": 4, "completion_tokens": 2},
+                },
+            )
+            return
+        if not payload.get("stream") and "check mentioned tool choice" in prompt:
+            self._json(
+                200,
+                {
+                    "choices": [
+                        {
+                            "message": {
+                                "role": "assistant",
+                                "content": json.dumps(
+                                    {
+                                        "tool_choice": payload.get("tool_choice"),
+                                        "tool_names": [
+                                            item.get("function", {}).get("name")
+                                            for item in payload.get("tools") or []
+                                            if isinstance(item, dict)
+                                        ],
+                                    }
+                                ),
+                            },
+                            "finish_reason": "stop",
+                        }
+                    ],
+                    "usage": {"prompt_tokens": 4, "completion_tokens": 2},
+                },
+            )
+            return
+        if not payload.get("stream") and "check harness tool choice" in prompt:
+            self._json(
+                200,
+                {
+                    "choices": [
+                        {
+                            "message": {
+                                "role": "assistant",
+                                "content": json.dumps(
+                                    {
+                                        "tool_choice": payload.get("tool_choice"),
+                                        "tool_names": [
+                                            item.get("function", {}).get("name")
+                                            for item in payload.get("tools") or []
+                                            if isinstance(item, dict)
+                                        ],
+                                    }
+                                ),
+                            },
+                            "finish_reason": "stop",
+                        }
+                    ],
+                    "usage": {"prompt_tokens": 4, "completion_tokens": 2},
+                },
+            )
+            return
+        if not payload.get("stream") and "check harness allowlist" in prompt:
+            names = [
+                item.get("function", {}).get("name")
+                for item in payload.get("tools") or []
+                if isinstance(item, dict)
+            ]
+            self._json(
+                200,
+                {
+                    "choices": [
+                        {
+                            "message": {
+                                "role": "assistant",
+                                "content": json.dumps({"tool_names": names}),
+                            },
+                            "finish_reason": "stop",
+                        }
+                    ],
+                    "usage": {"prompt_tokens": 4, "completion_tokens": 2},
+                },
+            )
+            return
+        if not payload.get("stream") and "check tool allowlist" in prompt:
+            names = [
+                item.get("function", {}).get("name")
+                for item in payload.get("tools") or []
+                if isinstance(item, dict)
+            ]
+            self._json(
+                200,
+                {
+                    "choices": [
+                        {
+                            "message": {
+                                "role": "assistant",
+                                "content": json.dumps({"tool_names": names}),
+                            },
+                            "finish_reason": "stop",
+                        }
+                    ],
+                    "usage": {"prompt_tokens": 4, "completion_tokens": 2},
+                },
+            )
+            return
+        if not payload.get("stream") and "invalid native tool json" in prompt:
+            self._json(
+                200,
+                {
+                    "choices": [
+                        {
+                            "message": {
+                                "role": "assistant",
+                                "content": None,
+                                "tool_calls": [
+                                    {
+                                        "id": "call_bad_json",
+                                        "type": "function",
+                                        "function": {
+                                            "name": "bash",
+                                            "arguments": "{\"command\":",
+                                        },
+                                    }
+                                ],
+                            },
+                            "finish_reason": "tool_calls",
+                        }
+                    ],
+                    "usage": {"prompt_tokens": 4, "completion_tokens": 2},
+                },
+            )
+            return
+        if not payload.get("stream") and "unknown native tool" in prompt:
+            self._json(
+                200,
+                {
+                    "choices": [
+                        {
+                            "message": {
+                                "role": "assistant",
+                                "content": None,
+                                "tool_calls": [
+                                    {
+                                        "id": "call_unknown",
+                                        "type": "function",
+                                        "function": {
+                                            "name": "delete_everything",
+                                            "arguments": "{}",
+                                        },
+                                    }
+                                ],
+                            },
+                            "finish_reason": "tool_calls",
+                        }
+                    ],
+                    "usage": {"prompt_tokens": 4, "completion_tokens": 2},
+                },
+            )
+            return
+        if not payload.get("stream") and "schema invalid native tool" in prompt:
+            self._json(
+                200,
+                {
+                    "choices": [
+                        {
+                            "message": {
+                                "role": "assistant",
+                                "content": None,
+                                "tool_calls": [
+                                    {
+                                        "id": "call_schema_bad",
+                                        "type": "function",
+                                        "function": {
+                                            "name": "bash",
+                                            "arguments": "{\"path\":\"pwd\"}",
+                                        },
+                                    }
+                                ],
+                            },
+                            "finish_reason": "tool_calls",
+                        }
+                    ],
+                    "usage": {"prompt_tokens": 4, "completion_tokens": 2},
+                },
+            )
+            return
+        if not payload.get("stream") and "metadata repair native tool" in prompt:
+            self._json(
+                200,
+                {
+                    "choices": [
+                        {
+                            "message": {
+                                "role": "assistant",
+                                "content": None,
+                                "tool_calls": [
+                                    {
+                                        "id": "call_metadata_repair",
+                                        "type": "function",
+                                        "function": {
+                                            "name": "search_skills",
+                                            "arguments": "{\"query\":\"figure visualization\"}",
+                                        },
+                                    }
+                                ],
+                            },
+                            "finish_reason": "tool_calls",
+                        }
+                    ],
+                    "usage": {"prompt_tokens": 4, "completion_tokens": 2},
+                },
+            )
+            return
+        if not payload.get("stream") and "science compat native tool" in prompt:
+            self._json(
+                200,
+                {
+                    "choices": [
+                        {
+                            "message": {
+                                "role": "assistant",
+                                "content": None,
+                                "tool_calls": [
+                                    {
+                                        "id": "call_science_compat",
+                                        "type": "function",
+                                        "function": {
+                                            "name": "bash",
+                                            "arguments": "{\"command\":\"pwd\"}",
+                                        },
+                                    }
+                                ],
+                            },
+                            "finish_reason": "tool_calls",
                         }
                     ],
                     "usage": {"prompt_tokens": 4, "completion_tokens": 2},
@@ -317,6 +588,33 @@ class FakeOpenAIHandler(BaseHTTPRequestHandler):
             )
             return
 
+        if "call invalid streamed tool" in prompt:
+            self._sse(
+                [
+                    {
+                        "choices": [
+                            {
+                                "delta": {
+                                    "tool_calls": [
+                                        {
+                                            "index": 0,
+                                            "id": "call_stream_bad",
+                                            "type": "function",
+                                            "function": {
+                                                "name": "bash",
+                                                "arguments": "{\"command\":",
+                                            },
+                                        }
+                                    ]
+                                },
+                                "finish_reason": "tool_calls",
+                            }
+                        ]
+                    },
+                ]
+            )
+            return
+
         self._sse(
             [
                 {"choices": [{"delta": {"role": "assistant"}}]},
@@ -384,6 +682,16 @@ def post_json(url: str, payload: dict[str, Any]) -> str:
                     break
             return "".join(lines)
         return response.read().decode("utf-8")
+
+
+def get_json(url: str) -> dict[str, Any]:
+    request = urllib.request.Request(
+        url,
+        headers={"anthropic-version": "2023-06-01"},
+        method="GET",
+    )
+    with urllib.request.urlopen(request, timeout=10) as response:
+        return json.loads(response.read().decode("utf-8"))
 
 
 def parse_sse(raw: str) -> list[tuple[str, dict[str, Any]]]:
@@ -474,6 +782,275 @@ def assert_tool_stream(proxy_port: int) -> None:
     assert stop == ["tool_use"], stop
 
 
+def bash_tool() -> dict[str, Any]:
+    return {
+        "name": "bash",
+        "description": "run shell",
+        "input_schema": {
+            "type": "object",
+            "properties": {"command": {"type": "string"}},
+            "required": ["command"],
+        },
+    }
+
+
+def search_skills_tool() -> dict[str, Any]:
+    return {
+        "name": "search_skills",
+        "description": "search skills",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "human_description": {"type": "string"},
+                "query": {"type": "string"},
+            },
+            "required": ["human_description"],
+        },
+    }
+
+
+def submit_output_tool() -> dict[str, Any]:
+    return {
+        "name": "submit_output",
+        "description": "submit structured review",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "verdict": {"type": "string"},
+                "findings": {"type": "array", "items": {"type": "object"}},
+            },
+            "required": ["verdict", "findings"],
+        },
+    }
+
+
+def assert_invalid_native_tool_filtered(proxy_port: int, prompt: str) -> None:
+    raw = post_json(
+        f"http://127.0.0.1:{proxy_port}/v1/messages",
+        {
+            "model": "claude-opus-4-8",
+            "max_tokens": 64,
+            "tools": [bash_tool()],
+            "messages": [{"role": "user", "content": prompt}],
+        },
+    )
+    payload = json.loads(raw)
+    assert payload["stop_reason"] == "end_turn", payload
+    assert all(block.get("type") != "tool_use" for block in payload["content"]), payload
+
+
+def assert_metadata_tool_repaired(proxy_port: int) -> None:
+    raw = post_json(
+        f"http://127.0.0.1:{proxy_port}/v1/messages",
+        {
+            "model": "claude-opus-4-8",
+            "max_tokens": 64,
+            "tools": [search_skills_tool()],
+            "messages": [{"role": "user", "content": "metadata repair native tool"}],
+        },
+    )
+    payload = json.loads(raw)
+    assert payload["stop_reason"] == "tool_use", payload
+    block = payload["content"][0]
+    assert block["name"] == "search_skills", payload
+    assert block["input"]["query"] == "figure visualization", payload
+    assert block["input"]["human_description"].startswith("Local proxy repaired"), payload
+
+
+def assert_claude_science_tool_compat(proxy_port: int) -> None:
+    raw = post_json(
+        f"http://127.0.0.1:{proxy_port}/v1/messages",
+        {
+            "model": "claude-opus-4-8",
+            "max_tokens": 64,
+            "tools": [bash_tool()],
+            "messages": [{"role": "user", "content": "science compat native tool"}],
+        },
+    )
+    payload = json.loads(raw)
+    assert payload["stop_reason"] == "tool_use", payload
+    block = payload["content"][0]
+    assert block["id"].startswith("toolu_"), payload
+    assert block["id"] != "call_science_compat", payload
+    assert block["caller"] == {"type": "direct"}, payload
+
+
+def assert_invalid_streamed_tool_filtered(proxy_port: int) -> None:
+    raw = post_json(
+        f"http://127.0.0.1:{proxy_port}/v1/messages",
+        {
+            "model": "claude-opus-4-8",
+            "stream": True,
+            "max_tokens": 64,
+            "tools": [bash_tool()],
+            "messages": [{"role": "user", "content": "call invalid streamed tool"}],
+        },
+    )
+    events = parse_sse(raw)
+    tool_starts = [
+        event
+        for name, event in events
+        if name == "content_block_start"
+        and event.get("content_block", {}).get("type") == "tool_use"
+    ]
+    assert tool_starts == [], events
+    stop = [
+        event["delta"]["stop_reason"]
+        for name, event in events
+        if name == "message_delta"
+    ]
+    assert stop == ["end_turn"], stop
+
+
+def assert_tool_choice_required(proxy_port: int) -> None:
+    raw = post_json(
+        f"http://127.0.0.1:{proxy_port}/v1/messages",
+        {
+            "model": "claude-opus-4-8",
+            "max_tokens": 64,
+            "tool_choice": {"type": "any"},
+            "tools": [bash_tool()],
+            "messages": [{"role": "user", "content": "check tool choice required"}],
+        },
+    )
+    payload = json.loads(raw)
+    upstream_seen = json.loads(payload["content"][0]["text"])
+    assert upstream_seen["tool_choice"] == "required", upstream_seen
+    assert upstream_seen["tool_count"] == 1, upstream_seen
+
+
+def assert_tool_allowlist(proxy_port: int) -> None:
+    raw = post_json(
+        f"http://127.0.0.1:{proxy_port}/v1/messages",
+        {
+            "model": "claude-opus-4-8",
+            "max_tokens": 64,
+            "tools": [bash_tool(), search_skills_tool()],
+            "messages": [{"role": "user", "content": "check tool allowlist"}],
+        },
+    )
+    payload = json.loads(raw)
+    upstream_seen = json.loads(payload["content"][0]["text"])
+    assert upstream_seen["tool_names"] == ["search_skills"], upstream_seen
+
+
+def assert_harness_tool_allowlist_bypass(proxy_port: int) -> None:
+    raw = post_json(
+        f"http://127.0.0.1:{proxy_port}/v1/messages",
+        {
+            "model": "claude-opus-4-8",
+            "max_tokens": 64,
+            "tools": [bash_tool(), search_skills_tool(), submit_output_tool()],
+            "messages": [{"role": "user", "content": "check harness allowlist"}],
+        },
+    )
+    payload = json.loads(raw)
+    upstream_seen = json.loads(payload["content"][0]["text"])
+    assert upstream_seen["tool_names"] == ["search_skills", "submit_output"], upstream_seen
+
+
+def assert_single_harness_tool_forced(proxy_port: int) -> None:
+    raw = post_json(
+        f"http://127.0.0.1:{proxy_port}/v1/messages",
+        {
+            "model": "claude-opus-4-8",
+            "max_tokens": 64,
+            "tools": [submit_output_tool()],
+            "messages": [{"role": "user", "content": "check harness tool choice"}],
+        },
+    )
+    payload = json.loads(raw)
+    upstream_seen = json.loads(payload["content"][0]["text"])
+    assert upstream_seen["tool_names"] == ["submit_output"], upstream_seen
+    assert upstream_seen["tool_choice"] == {
+        "type": "function",
+        "function": {"name": "submit_output"},
+    }, upstream_seen
+
+
+def assert_mentioned_tool_forced(proxy_port: int) -> None:
+    raw = post_json(
+        f"http://127.0.0.1:{proxy_port}/v1/messages",
+        {
+            "model": "claude-opus-4-8",
+            "max_tokens": 64,
+            "tools": [search_skills_tool(), {
+                "name": "skill",
+                "description": "load skill",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "human_description": {"type": "string"},
+                        "skill": {"type": "string"},
+                    },
+                    "required": ["human_description", "skill"],
+                },
+            }],
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "check mentioned tool choice: use the skill tool once",
+                }
+            ],
+        },
+    )
+    payload = json.loads(raw)
+    upstream_seen = json.loads(payload["content"][0]["text"])
+    assert upstream_seen["tool_choice"] == {
+        "type": "function",
+        "function": {"name": "skill"},
+    }, upstream_seen
+
+
+def assert_natural_call_tool_forced(proxy_port: int) -> None:
+    raw = post_json(
+        f"http://127.0.0.1:{proxy_port}/v1/messages",
+        {
+            "model": "claude-opus-4-8",
+            "max_tokens": 64,
+            "tools": [
+                {
+                    "name": "python",
+                    "description": "execute python",
+                    "input_schema": {
+                        "type": "object",
+                        "properties": {
+                            "code": {"type": "string"},
+                            "human_description": {"type": "string"},
+                        },
+                        "required": ["code"],
+                    },
+                },
+                {
+                    "name": "save_artifacts",
+                    "description": "save files as artifacts",
+                    "input_schema": {
+                        "type": "object",
+                        "properties": {"files": {"type": "array", "items": {"type": "string"}}},
+                        "required": ["files"],
+                    },
+                },
+                search_skills_tool(),
+            ],
+            "messages": [
+                {
+                    "role": "user",
+                    "content": (
+                        "check mentioned tool choice: call python to create a figure, "
+                        "then call save_artifacts after python succeeds"
+                    ),
+                }
+            ],
+        },
+    )
+    payload = json.loads(raw)
+    upstream_seen = json.loads(payload["content"][0]["text"])
+    assert upstream_seen["tool_choice"] == {
+        "type": "function",
+        "function": {"name": "python"},
+    }, upstream_seen
+
+
 def assert_nonstream(proxy_port: int) -> None:
     raw = post_json(
         f"http://127.0.0.1:{proxy_port}/v1/messages",
@@ -485,6 +1062,19 @@ def assert_nonstream(proxy_port: int) -> None:
     )
     payload = json.loads(raw)
     assert payload["content"][0]["text"] == "nonstream ok", payload
+
+
+def assert_wrapper_text_cleaned(proxy_port: int) -> None:
+    raw = post_json(
+        f"http://127.0.0.1:{proxy_port}/v1/messages",
+        {
+            "model": "claude-opus-4-8",
+            "max_tokens": 64,
+            "messages": [{"role": "user", "content": "mtplx wrapper text"}],
+        },
+    )
+    payload = json.loads(raw)
+    assert payload["content"][0]["text"] == "wrapper stripped", payload
 
 
 def assert_text_tool_call_adapter(
@@ -606,42 +1196,77 @@ def assert_stream_connection_closes(proxy_port: int) -> None:
                 break
             received += chunk
         assert b"event: message_stop" in received, received.decode("utf-8", "replace")
-        assert sock.recv(1) == b""
+        try:
+            assert sock.recv(1) == b""
+        except OSError as exc:
+            assert exc.errno == errno.EBADF
+
+
+def assert_models_endpoint(proxy_port: int) -> None:
+    payload = get_json(f"http://127.0.0.1:{proxy_port}/v1/models?limit=1000")
+    ids = [item["id"] for item in payload["data"]]
+    assert ids == ["claude-opus-4-8", "fake-model"], payload
+    assert payload["has_more"] is False, payload
+    assert payload["first_id"] == "claude-opus-4-8", payload
+    assert payload["last_id"] == "fake-model", payload
+
+    model = get_json(f"http://127.0.0.1:{proxy_port}/v1/models/claude-opus-4-8")
+    assert model["id"] == "claude-opus-4-8", model
+    assert model["type"] == "model", model
+
+
+def start_proxy_process(
+    fake_port: int,
+    proxy_port: int,
+    tool_mode: str,
+    extra_args: list[str] | None = None,
+) -> subprocess.Popen[bytes]:
+    args = [
+        sys.executable,
+        str(ROOT / "proxy" / "anthropic_mtplx_proxy.py"),
+        "--host",
+        "127.0.0.1",
+        "--port",
+        str(proxy_port),
+        "--upstream-base",
+        f"http://127.0.0.1:{fake_port}/v1",
+        "--upstream-model",
+        "fake-model",
+        "--advertised-models",
+        "claude-opus-4-8,fake-model",
+        "--parse-text-tool-calls",
+        "1",
+        "--tool-mode",
+        tool_mode,
+    ]
+    if extra_args:
+        args.extend(extra_args)
+    return subprocess.Popen(
+        args,
+        cwd=ROOT,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
 
 
 def main() -> int:
     fake_server, fake_port = start_fake_server()
     proxy_port = free_port()
-    proc = subprocess.Popen(
-        [
-            sys.executable,
-            str(ROOT / "proxy" / "anthropic_mtplx_proxy.py"),
-            "--host",
-            "127.0.0.1",
-            "--port",
-            str(proxy_port),
-            "--upstream-base",
-            f"http://127.0.0.1:{fake_port}/v1",
-            "--upstream-model",
-            "fake-model",
-            "--advertised-models",
-            "claude-opus-4-8,fake-model",
-            "--parse-text-tool-calls",
-            "1",
-            "--tool-mode",
-            "drop",
-        ],
-        cwd=ROOT,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-    )
+    proc = start_proxy_process(fake_port, proxy_port, "drop")
     try:
         wait_for_proxy(proxy_port, proc)
+        assert_models_endpoint(proxy_port)
         assert_text_stream(proxy_port)
         assert_tool_stream(proxy_port)
+        assert_invalid_streamed_tool_filtered(proxy_port)
         assert_full_json_stream_fallback(proxy_port)
         assert_stream_connection_closes(proxy_port)
         assert_nonstream(proxy_port)
+        assert_wrapper_text_cleaned(proxy_port)
+        assert_invalid_native_tool_filtered(proxy_port, "invalid native tool json")
+        assert_invalid_native_tool_filtered(proxy_port, "unknown native tool")
+        assert_invalid_native_tool_filtered(proxy_port, "schema invalid native tool")
+        assert_metadata_tool_repaired(proxy_port)
         assert_dropped_tool_guard(proxy_port)
         assert_text_tool_call_adapter(proxy_port, "text tool call")
         assert_text_tool_call_adapter(proxy_port, "text json tool call")
@@ -677,9 +1302,79 @@ def main() -> int:
             proc.wait(timeout=5)
         except subprocess.TimeoutExpired:
             proc.kill()
+
+    pass_proxy_port = free_port()
+    pass_proc = start_proxy_process(fake_port, pass_proxy_port, "pass")
+    try:
+        wait_for_proxy(pass_proxy_port, pass_proc)
+        assert_tool_choice_required(pass_proxy_port)
+        assert_single_harness_tool_forced(pass_proxy_port)
+    finally:
+        pass_proc.terminate()
+        try:
+            pass_proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            pass_proc.kill()
+
+    allowlist_proxy_port = free_port()
+    allowlist_proc = start_proxy_process(
+        fake_port,
+        allowlist_proxy_port,
+        "pass",
+        ["--tool-allowlist", "search_skills"],
+    )
+    try:
+        wait_for_proxy(allowlist_proxy_port, allowlist_proc)
+        assert_tool_allowlist(allowlist_proxy_port)
+        assert_harness_tool_allowlist_bypass(allowlist_proxy_port)
+    finally:
+        allowlist_proc.terminate()
+        try:
+            allowlist_proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            allowlist_proc.kill()
+
+    force_proxy_port = free_port()
+    force_proc = start_proxy_process(
+        fake_port,
+        force_proxy_port,
+        "pass",
+        ["--force-mentioned-tool", "1"],
+    )
+    try:
+        wait_for_proxy(force_proxy_port, force_proc)
+        assert_mentioned_tool_forced(force_proxy_port)
+        assert_natural_call_tool_forced(force_proxy_port)
+    finally:
+        force_proc.terminate()
+        try:
+            force_proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            force_proc.kill()
+
+    compat_proxy_port = free_port()
+    compat_proc = start_proxy_process(
+        fake_port,
+        compat_proxy_port,
+        "drop",
+        ["--claude-science-compat", "1"],
+    )
+    try:
+        wait_for_proxy(compat_proxy_port, compat_proc)
+        assert_claude_science_tool_compat(compat_proxy_port)
+    finally:
+        compat_proc.terminate()
+        try:
+            compat_proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            compat_proc.kill()
         fake_server.shutdown()
     print("streaming proxy tests passed")
     return 0
+
+
+def test_streaming_proxy_harness() -> None:
+    assert main() == 0
 
 
 if __name__ == "__main__":

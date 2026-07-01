@@ -44,15 +44,32 @@ expose OpenAI-compatible chat completions. The proxy does the translation:
 - The proxy test suite covers Anthropic SSE output, OpenAI streaming text,
   OpenAI streaming tool-call deltas, full-JSON fallback, socket close after
   `message_stop`, and observed Qwen text-tool-call formats.
+- Claude Science foreground and reviewer frames are separate app requests. The
+  proxy now logs request kind (`harness`, `tool_agent`, `tools_hidden`, or
+  `plain`) and treats structural reviewer tools like `submit_output` separately
+  from ordinary science/execution tools.
+- In an isolated execution-tool probe, Qwen 27B emitted schema-valid `python`
+  and `save_artifacts` calls when only those tools were exposed. That is a tool
+  formatting proof; full app-side execution still needs persisted
+  `tool_result` and artifact evidence.
+- A fresh authenticated app-API probe completed the full foreground/reviewer
+  loop: foreground `search_skills` tool use and tool result, then reviewer
+  `submit_output` tool use and success result. This is the strongest current
+  evidence that the broker can keep main-agent and reviewer traffic distinct.
 
 ## What Is Rough
 
 - Streaming is configurable. The proxy can bridge true OpenAI SSE into
   Anthropic SSE, but MTPLX/Qwen direct streaming hung during live testing, so the
   MTPLX profiles currently use buffered mode.
-- Tool calls need more stress testing. Basic format translation exists, and the
-  Qwen analysis profile has adapters for observed reviewer pseudo-tool-call
-  formats, but full scientific-agent workflows will expose more edge cases.
+- Tool calls still need live workflow stress testing, but the proxy now forwards
+  tools through a validation boundary: unknown tools, malformed JSON args, and
+  schema-invalid inputs are filtered before Anthropic `tool_use` is emitted.
+  The Qwen analysis profile can also repair observed reviewer pseudo-tool-call
+  formats when explicitly enabled.
+- Do not use one universal allowlist for every request shape. Reviewer/harness
+  calls need `submit_output`, while foreground science-agent calls may need a
+  much smaller tool subset than the full Claude Science inventory.
 - Local model latency matters. Tiny prompts worked; longer Claude Science loops
   need careful model and token-cap tuning.
 - Local backends may serialize concurrent requests. MTPLX can return
@@ -78,7 +95,25 @@ PROXY_ADVERTISED_MODELS=claude-opus-4-8,gemma-or-qwen-or-your-model
 PROXY_MAX_TOKENS_CAP=4096
 PROXY_STREAM_MODE=direct
 PROXY_TOOL_MODE=pass
+PROXY_TOOL_ALLOWLIST=
+PROXY_TOOL_VALIDATION=schema
+PROXY_TOOL_REPAIR=metadata
+PROXY_HARNESS_TOOLS=submit_output
 PROXY_PARSE_TEXT_TOOL_CALLS=0
+# Optional diagnostics only:
+# PROXY_SCHEMA_LOG_PATH=_local/tool-schema-capture.jsonl
+```
+
+For local Qwen-style models, start with the focused probe profile:
+
+```bash
+PROXY_PROFILE=profiles/mtplx-qwen-tool-probe.env.example ./scripts/start-proxy-detached.sh
+```
+
+For execution-tool probes after that:
+
+```bash
+PROXY_PROFILE=profiles/mtplx-qwen-execution-probe.env.example ./scripts/start-proxy-detached.sh
 ```
 
 Then run:
@@ -88,6 +123,7 @@ PROXY_PROFILE=profiles/local.env ./scripts/start-proxy-detached.sh
 ./scripts/smoke-proxy.sh
 ./scripts/test-streaming-proxy.sh
 ./scripts/launch-claude-science-local.sh
+scripts/submit-local-request.py --project-id <project-id> "For this gateway test, reply with exactly LOCAL MODEL OK. Do not use tools."
 ```
 
 ## Safety Notes
