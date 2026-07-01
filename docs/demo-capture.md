@@ -15,8 +15,10 @@ proof, but the free-tier UI capture is not stable enough to publish as a
 working demo GIF.
 
 Current MTPLX/Qwen demo GIF:
-[`assets/qwen-mtplx-clean-demo.gif`](assets/qwen-mtplx-clean-demo.gif). It was
-captured on 2026-07-01 with:
+[`assets/qwen-mtplx-annotated-demo.gif`](assets/qwen-mtplx-annotated-demo.gif).
+It is an annotated presentation layer built from the raw capture at
+[`assets/qwen-mtplx-clean-demo.gif`](assets/qwen-mtplx-clean-demo.gif). The
+raw capture was recorded on 2026-07-01 with:
 
 - MTPLX serving `mtplx-qwen36-27b-optimized-quality` on
   `127.0.0.1:8030/v1`.

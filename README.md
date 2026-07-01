@@ -134,10 +134,11 @@ analysis prompts, focused tool loops, reviewer `submit_output`, `python` plus
 `save_artifacts` probes, OpenRouter/Gemma artifact runs, local Qwen artifact
 runs, reviewer inspection-tool routing, and local/provider model-picker labels.
 
-Short demo GIF:
-[`docs/assets/qwen-mtplx-clean-demo.gif`](docs/assets/qwen-mtplx-clean-demo.gif).
-It shows the isolated app using the `MTPLX Qwen 27B Local` model label and a
-deterministic no-tool Qwen/MTPLX response through the local proxy.
+Short annotated demo GIF:
+[`docs/assets/qwen-mtplx-annotated-demo.gif`](docs/assets/qwen-mtplx-annotated-demo.gif).
+It shows the isolated app using the `MTPLX Qwen 27B Local` model label, the
+local proxy route, and a deterministic no-tool Qwen/MTPLX response rendered
+back in Claude Science.
 
 The strongest current local Qwen workflow proof is frame
 `55f1c397-47ea-4d9a-adda-48cf357fc4c4`: Qwen 27B created and saved TSV,

@@ -169,7 +169,8 @@ For public screenshots or GIFs, also confirm:
 
 Known-good MTPLX/Qwen GIF capture:
 
-- Asset: `docs/assets/qwen-mtplx-clean-demo.gif`.
+- Primary asset: `docs/assets/qwen-mtplx-annotated-demo.gif`.
+- Raw capture: `docs/assets/qwen-mtplx-clean-demo.gif`.
 - Frame: `be060a7f-5d68-4c19-a6ca-682356cd7789`.
 - Provider path: MTPLX on `127.0.0.1:8030/v1`, proxy on `127.0.0.1:18081`,
   isolated app on `127.0.0.1:18765`.
