@@ -59,6 +59,7 @@ Start with prose or narrow tool profiles before broadening tool exposure:
 
 ```bash
 PROXY_PROFILE=profiles/mtplx-qwen-analysis.env.example ./scripts/start-proxy-detached.sh
+PROXY_PROFILE=profiles/mtplx-qwen-research-planning.env.example ./scripts/start-proxy-detached.sh
 PROXY_PROFILE=profiles/mtplx-qwen-tool-probe.env.example ./scripts/start-proxy-detached.sh
 PROXY_PROFILE=profiles/mtplx-qwen-execution-probe.env.example ./scripts/start-proxy-detached.sh
 ```
@@ -69,8 +70,12 @@ Observed Qwen behavior:
   tool surface is narrow and explicitly requested.
 - The execution profile is intentionally not a general discovery profile. If a
   research-planning prompt needs `search_skills`, `skill`, browser, or other
-  non-execution tools, use the tool-probe profile or the direct-analysis
-  profile instead of the execution profile.
+  non-execution tools, use the research-planning profile or the direct-analysis
+  profile instead of the execution profile. The research-planning profile
+  exposes a focused public-data discovery surface: `web_search`,
+  `fetch_article_fulltext`, `search_skills`, `skill`, compute-discovery tools,
+  `summary_query`, `boundary`, `generate_plan`, and `update_step_status`, while
+  hiding `python` and `save_artifacts`.
 - It may split a requested artifact workflow across several Python calls even
   when asked to do it in one call.
 - It may try to call Claude Science tools inside Python source, for example

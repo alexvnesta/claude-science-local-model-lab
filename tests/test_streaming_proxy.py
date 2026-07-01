@@ -18,6 +18,19 @@ from typing import Any
 
 
 ROOT = Path(__file__).resolve().parents[1]
+RESEARCH_PLANNING_TOOL_ALLOWLIST = [
+    "web_search",
+    "fetch_article_fulltext",
+    "search_skills",
+    "skill",
+    "list_compute",
+    "compute_details",
+    "ask_about_compute",
+    "summary_query",
+    "boundary",
+    "generate_plan",
+    "update_step_status",
+]
 
 
 class FakeOpenAIHandler(BaseHTTPRequestHandler):
@@ -1574,6 +1587,36 @@ def submit_output_tool() -> dict[str, Any]:
     }
 
 
+def generic_tool(name: str) -> dict[str, Any]:
+    return {
+        "name": name,
+        "description": f"{name} tool",
+        "input_schema": {"type": "object"},
+    }
+
+
+def env_file_value(path: Path, key: str) -> str | None:
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        found_key, value = line.split("=", 1)
+        if found_key == key:
+            return value.strip().strip("'\"")
+    return None
+
+
+def assert_research_planning_profile_file() -> None:
+    profile = ROOT / "profiles" / "mtplx-qwen-research-planning.env.example"
+    allowlist = env_file_value(profile, "PROXY_TOOL_ALLOWLIST")
+    assert allowlist == ",".join(RESEARCH_PLANNING_TOOL_ALLOWLIST), allowlist
+    assert "python" not in (allowlist or "").split(","), allowlist
+    assert "save_artifacts" not in (allowlist or "").split(","), allowlist
+    display_names = env_file_value(profile, "PROXY_MODEL_DISPLAY_NAMES") or ""
+    assert "MTPLX Qwen 27B Research" in display_names, display_names
+    assert "MTPLX Qwen 27B Local" not in display_names, display_names
+
+
 def assert_invalid_native_tool_filtered(proxy_port: int, prompt: str) -> None:
     raw = post_json(
         f"http://127.0.0.1:{proxy_port}/v1/messages",
@@ -1768,6 +1811,40 @@ def assert_pass_allowlist_guard(proxy_port: int) -> None:
     )
     payload = json.loads(raw)
     assert payload["content"][0]["text"] == "guard present", payload
+
+
+def assert_research_planning_allowlist(proxy_port: int) -> None:
+    offered = [
+        generic_tool("web_search"),
+        generic_tool("fetch_article_fulltext"),
+        search_skills_tool(),
+        generic_tool("skill"),
+        generic_tool("list_compute"),
+        generic_tool("compute_details"),
+        generic_tool("ask_about_compute"),
+        generic_tool("summary_query"),
+        generic_tool("boundary"),
+        generic_tool("generate_plan"),
+        generic_tool("update_step_status"),
+        python_tool(),
+        generic_tool("save_artifacts"),
+        repl_tool(),
+    ]
+    raw = post_json(
+        f"http://127.0.0.1:{proxy_port}/v1/messages",
+        {
+            "model": "claude-opus-4-8",
+            "max_tokens": 64,
+            "tools": offered,
+            "messages": [{"role": "user", "content": "check tool allowlist"}],
+        },
+    )
+    payload = json.loads(raw)
+    upstream_seen = json.loads(payload["content"][0]["text"])
+    assert upstream_seen["tool_names"] == RESEARCH_PLANNING_TOOL_ALLOWLIST, upstream_seen
+    assert "python" not in upstream_seen["tool_names"], upstream_seen
+    assert "save_artifacts" not in upstream_seen["tool_names"], upstream_seen
+    assert "repl" not in upstream_seen["tool_names"], upstream_seen
 
 
 def assert_harness_tool_allowlist_bypass(proxy_port: int) -> None:
@@ -2432,6 +2509,7 @@ def start_proxy_env_alias_process(
 
 
 def main() -> int:
+    assert_research_planning_profile_file()
     fake_server, fake_port = start_fake_server()
     proxy_port = free_port()
     proc = start_proxy_process(
@@ -2596,6 +2674,23 @@ def main() -> int:
             allowlist_proc.wait(timeout=5)
         except subprocess.TimeoutExpired:
             allowlist_proc.kill()
+
+    research_proxy_port = free_port()
+    research_proc = start_proxy_process(
+        fake_port,
+        research_proxy_port,
+        "pass",
+        ["--tool-allowlist", ",".join(RESEARCH_PLANNING_TOOL_ALLOWLIST)],
+    )
+    try:
+        wait_for_proxy(research_proxy_port, research_proc)
+        assert_research_planning_allowlist(research_proxy_port)
+    finally:
+        research_proc.terminate()
+        try:
+            research_proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            research_proc.kill()
 
     harness_allowlist_proxy_port = free_port()
     harness_allowlist_proc = start_proxy_process(

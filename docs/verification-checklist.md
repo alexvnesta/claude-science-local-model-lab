@@ -56,6 +56,20 @@ For direct-analysis runs with MTPLX/Qwen, prefer:
 PROXY_PROFILE=profiles/mtplx-qwen-analysis.env.example ./scripts/start-proxy-detached.sh
 ```
 
+For public-data discovery/planning prompts, such as deciding what breast cancer
+TE-expression resources are available before reprocessing anything, prefer:
+
+```bash
+PROXY_PROFILE=profiles/mtplx-qwen-research-planning.env.example ./scripts/start-proxy-detached.sh
+```
+
+This profile exposes discovery/planning tools such as `web_search`,
+`fetch_article_fulltext`, `search_skills`, `skill`, `list_compute`,
+`compute_details`, `ask_about_compute`, `summary_query`, `boundary`,
+`generate_plan`, and `update_step_status`, while hiding `python` and
+`save_artifacts`. Switch to the execution profile only when the next turn truly
+needs local code execution or artifact creation.
+
 For another local backend, copy and edit the generic profile:
 
 ```bash
