@@ -191,12 +191,11 @@ Known-good MTPLX/Qwen workflow GIF capture:
 
 Older exact-reply MTPLX/Qwen capture:
 
-- Asset: `docs/assets/qwen-mtplx-annotated-demo.gif`.
-- Raw capture: `docs/assets/qwen-mtplx-clean-demo.gif`.
 - Frame: `be060a7f-5d68-4c19-a6ca-682356cd7789`.
 - Prompt/answer marker: `QWEN MTPLX CLEAN OK`.
-- Caveat: reviewer later ended inconclusive with no structured output; the GIF
-  proves foreground routing and rendering, not reviewer success.
+- Caveat: reviewer later ended inconclusive with no structured output. The
+  public README now uses the TP53 workflow GIF instead because it proves
+  artifact creation and reviewer recovery, not just foreground routing.
 
 OpenRouter-free note from 2026-07-01: provider-only smoke passed, but full
 Claude Science UI prompts to two `:free` models hit upstream 429 capacity

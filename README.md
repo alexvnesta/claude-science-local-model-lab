@@ -36,20 +36,15 @@ If you only want the architecture distinction, read
 Most public proxies target Claude Code-style chat. This one is narrower: it
 adapts the request shapes Claude Science actually emits.
 
-- Implements the Claude Science surface we observed: `/v1/models`,
-  `/v1/models/{id}`, `/v1/messages`, and `/v1/messages/count_tokens`.
-- Brokers foreground, hidden-tool, tool-agent, and reviewer/harness requests
-  instead of treating every call as one chat loop.
-- Handles reviewer tools such as `submit_output` separately from user tools
-  such as `python`, `bash`, and `search_skills`.
-- Translates Anthropic `tool_use`/`tool_result` blocks to OpenAI-compatible
-  tool messages and translates OpenAI `tool_calls` back.
-- Repairs narrow local-model pseudo-tool-call text patterns observed from Qwen
-  reviewer traffic.
-- Validates returned tool calls against the exact schema Claude Science offered
-  on that request before emitting executable `tool_use`.
-- Advertises Claude-shaped model aliases with human display names so the app
-  can show a local model in its picker.
+- Brokers foreground, hidden-tool, tool-agent, and reviewer/harness requests.
+- Keeps reviewer tools such as `submit_output` separate from foreground tools
+  such as `python` and `save_artifacts`.
+- Translates Anthropic tool blocks to OpenAI-compatible tool messages and
+  translates OpenAI tool calls back.
+- Validates returned tool calls against the exact schemas Claude Science
+  offered on that request.
+- Supports local/provider profiles, model-picker labels, redacted observability,
+  and regression tests.
 
 For the longer comparison with Claude Code proxies, see
 [`docs/why-this-proxy.md`](docs/why-this-proxy.md).
@@ -130,13 +125,8 @@ itself is not bundled in this repo. If your companion stack exposes a different
 base URL or model name, copy `profiles/openai-compatible.env.example` to
 `profiles/local.env` and set those values explicitly.
 
-To get MTPLX itself, use the upstream
-[MTPLX GitHub repo](https://github.com/youssofal/MTPLX) or
-[mtplx.com](https://mtplx.com/). The local demo used the Qwen3.6 27B MTPLX
-Optimized Quality checkpoint family:
-[Youssofal/Qwen3.6-27B-MTPLX-Optimized-Quality](https://huggingface.co/Youssofal/Qwen3.6-27B-MTPLX-Optimized-Quality).
-Your local server may expose that checkpoint under a shorter alias; the proxy
-only needs the alias in `UPSTREAM_OPENAI_MODEL` to match the running provider.
+MTPLX install and checkpoint links are in
+[`docs/providers.md`](docs/providers.md).
 
 OpenRouter path:
 
@@ -163,21 +153,13 @@ PROXY_PROFILE=<the same profile you started> ./scripts/doctor.sh
 ./scripts/test-streaming-proxy.sh
 ```
 
-Expected first-run signals:
-
-- `start-proxy-detached.sh` prints `Proxy started with PID ...`, a log path
-  under `_local/proxy.log`, and a JSON `/healthz` payload.
-- `doctor.sh` prints `ok: _local/ is ignored by git`; upstream or proxy
-  warnings usually mean the provider or proxy is not running yet.
-- `smoke-proxy.sh` prints `/healthz`, a token-count response, and a small
-  Anthropic-shaped message response containing the requested marker text.
-- `test-streaming-proxy.sh` runs the local fake-provider streaming tests and
-  should exit successfully without needing Claude Science or a live provider.
-
 `/healthz` is intentionally safe to share in bug reports. It includes provider
 identity, stream mode, request-kind counters, provider latency summaries, retry
 counts, and tool-filter reason counts, but not prompts, tool arguments, tool
 results, account state, or artifacts.
+
+Expected first-run signals are listed in
+[`docs/verification-checklist.md`](docs/verification-checklist.md).
 
 Provider-only smoke tests are available without launching Claude Science:
 
@@ -204,12 +186,6 @@ If routing is local, `_local/proxy.log` will show `POST /v1/messages`.
 For provider-specific notes and official Ollama/OpenRouter references, see
 [`docs/providers.md`](docs/providers.md).
 
-MTPLX note: the Qwen profiles enable `PROXY_MTPLX_AVOID_BACKGROUND_BYPASS=1`.
-This raises small Claude Science helper/reviewer calls above MTPLX's 48-token
-background cutoff when their request shape would otherwise return an immediate
-`session_busy` during foreground generation. The proxy log records
-`mtplx_background_risk`, reasons, roles, and the adjusted upstream token count.
-
 ## Current Proof
 
 The gateway path works with an isolated Claude Science app copy and MTPLX/Qwen
@@ -225,10 +201,10 @@ Primary Qwen/MTPLX workflow GIF:
 
 ![Claude Science running a TP53 TCGA-BRCA analysis through local MTPLX Qwen 27B](docs/assets/qwen-mtplx-tp53-workflow-demo.gif)
 
-It shows the isolated app using the `MTPLX Qwen 27B Local` model label,
-conversation-scoped Python permission, a reviewer finding, Qwen's corrective
-artifact creation, a final reviewer pass, and the generated TP53 TCGA-BRCA
-plot opened in split view.
+The GIF shows the isolated app using the `MTPLX Qwen 27B Local` model label,
+conversation-scoped Python permission, a reviewer finding, corrective artifact
+creation, a final reviewer pass, and the generated TP53 TCGA-BRCA plot opened
+in split view.
 
 Public source notebook for the TP53 analysis:
 [`examples/tp53_brca_xena_analysis.ipynb`](examples/tp53_brca_xena_analysis.ipynb).
@@ -239,46 +215,10 @@ The demo uses the public UCSC Xena TCGA-BRCA `HiSeqV2` expression matrix:
 
 <img src="docs/assets/tp53-notebook-source-2.png" alt="Notebook source for plotting TP53 expression and writing artifacts" width="900">
 
-The most user-legible local Qwen workflow proof is frame
-`0b03da82-efe5-4440-be56-651d7053d1fb`: Qwen 27B downloaded the TCGA-BRCA Xena
-matrix, extracted TP53 expression for primary tumor and normal samples, saved
-`tp53_expression_plot.png` and `tp53_summary.md`, and completed after a reviewer
-finding was resolved. The final reviewer child
-`063795d2-56a4-4776-84e6-afdd3970f05b` returned `findings: []`.
-
-The broader synthetic local Qwen artifact proof is frame
-`55f1c397-47ea-4d9a-adda-48cf357fc4c4`: Qwen 27B created and saved TSV,
-Markdown, and PNG artifacts through Claude Science. Its reviewer child used
-real reviewer inspection tools (`repl` and `read_file`) after the Qwen execution
-profile exposed a reviewer-specific allowlist. The reviewer did useful checks
-but was still slow and loop-prone, so the profile now includes an opt-in
-closeout guard that forwards only `submit_output` after several reviewer
-inspection results.
-
-Older exact-reply routing GIF:
-[`docs/assets/qwen-mtplx-annotated-demo.gif`](docs/assets/qwen-mtplx-annotated-demo.gif).
-It is still useful as a short model-picker/rendering capture, but it is not the
-primary workflow proof.
-
-The newer `2bc1ac85` Claude Science client was also tested in a temp copy. It
-still honored `ANTHROPIC_BASE_URL` and called the proxy through `/v1/models` and
-`/v1/messages`.
-
-Known caveats: long buffered generations can starve the app of SSE events;
-direct streaming now has deterministic heartbeat and request-ID coverage in the
-proxy test suite, but MTPLX/Qwen direct mode still needs fresh app-side proof
-for persisted long tool loops; free-provider endpoints can rate-limit mid-run;
-local/free models vary a lot in tool-call and figure-layout quality; Qwen 27B
-can complete artifact workflows but tends to split work across many tool turns
-and may over-inspect in reviewer frames without the closeout guard.
-
-For detailed checks and evidence, see
-[`docs/verification-checklist.md`](docs/verification-checklist.md) and
-[`docs/roadmap.md`](docs/roadmap.md).
-
-For public-demo capture notes, including how the in-app model label is
-configured and why OpenRouter-free UI GIFs can be flaky even when provider
-smokes pass, see [`docs/demo-capture.md`](docs/demo-capture.md).
+For detailed evidence, caveats, and capture notes, see
+[`docs/evidence-bundle.md`](docs/evidence-bundle.md),
+[`docs/demo-capture.md`](docs/demo-capture.md), and
+[`docs/verification-checklist.md`](docs/verification-checklist.md).
 
 ## Repo Map
 

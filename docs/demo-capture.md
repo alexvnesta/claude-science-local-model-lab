@@ -70,11 +70,7 @@ python3 scripts/make-tp53-demo-gif.py \
   --contact /tmp/tp53-qwen-demo-contact.png
 ```
 
-Older exact-reply MTPLX/Qwen demo GIF:
-[`assets/qwen-mtplx-annotated-demo.gif`](assets/qwen-mtplx-annotated-demo.gif).
-It is an annotated presentation layer built from the raw capture at
-[`assets/qwen-mtplx-clean-demo.gif`](assets/qwen-mtplx-clean-demo.gif). The
-raw capture was recorded on 2026-07-01 with:
+An older exact-reply MTPLX/Qwen capture was recorded on 2026-07-01 with:
 
 - MTPLX serving `mtplx-qwen36-27b-optimized-quality` on
   `127.0.0.1:8030/v1`.
@@ -83,10 +79,9 @@ raw capture was recorded on 2026-07-01 with:
 - Isolated Claude Science on `127.0.0.1:18765`.
 - Prompt: `No tools, no files, no browsing. Reply with exactly: QWEN MTPLX CLEAN OK`.
 
-The older exact-reply capture intentionally ends on the successful visible
-answer. In the same run, the reviewer later ended `Inconclusive` with no
-structured output, which is still a current Qwen/harness caveat for this
-no-tool demo path.
+That capture proved model-picker/routing/rendering only. It was superseded by
+the TP53 workflow GIF and is no longer kept as a public README asset because
+its reviewer later ended `Inconclusive` with no structured output.
 
 ## Model Picker Labels
 
