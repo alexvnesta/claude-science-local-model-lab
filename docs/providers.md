@@ -43,6 +43,18 @@ POST /v1/chat/completions
 Then set `UPSTREAM_OPENAI_BASE_URL` and `UPSTREAM_OPENAI_MODEL` in a local
 profile. The model slug must match whatever the upstream server advertises.
 
+Get MTPLX and the demo checkpoint:
+
+- [MTPLX GitHub repo](https://github.com/youssofal/MTPLX)
+- [MTPLX app and release downloads](https://mtplx.com/)
+- [Youssofal/Qwen3.6-27B-MTPLX-Optimized-Quality](https://huggingface.co/Youssofal/Qwen3.6-27B-MTPLX-Optimized-Quality)
+
+Follow the upstream MTPLX install/onboarding instructions, start an
+OpenAI-compatible local server, then point this proxy at the server's base URL.
+The public checkpoint ID and the model alias exposed by the local server do not
+have to be identical; `UPSTREAM_OPENAI_MODEL` just needs to match the running
+server.
+
 Start with prose or narrow tool profiles before broadening tool exposure:
 
 ```bash

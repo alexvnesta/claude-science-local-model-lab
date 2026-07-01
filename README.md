@@ -87,7 +87,7 @@ Provider paths at a glance:
 | Path | Provider prerequisite | Start command | Caveat |
 | --- | --- | --- | --- |
 | Ollama | Ollama app or `ollama serve`, plus a pulled model | `OLLAMA_MODEL=qwen3:8b PROXY_PROFILE=profiles/ollama.env.example ./scripts/start-proxy-detached.sh` | Most reproducible public local path, but smaller local models may need prose-only mode. |
-| MTPLX/Qwen | Separate companion MTPLX/Qwen stack on `127.0.0.1:8030/v1` | `PROXY_PROFILE=profiles/mtplx-qwen.env.example ./scripts/start-proxy-detached.sh` | Exact GIF path, but MTPLX/Qwen itself is not bundled here. |
+| [MTPLX](https://github.com/youssofal/MTPLX) / Qwen | Separate companion MTPLX/Qwen stack on `127.0.0.1:8030/v1` | `PROXY_PROFILE=profiles/mtplx-qwen.env.example ./scripts/start-proxy-detached.sh` | Exact GIF path, but MTPLX/Qwen itself is not bundled here. |
 | OpenRouter | `OPENROUTER_API_KEY` and a model slug | `OPENROUTER_API_KEY=... OPENROUTER_MODEL=... PROXY_PROFILE=profiles/openrouter.env.example ./scripts/start-proxy-detached.sh` | Free routes can pass smoke tests but fail large Claude Science UI prompts with capacity errors. |
 | Generic | Any provider with `GET /v1/models` and `POST /v1/chat/completions` | Copy `profiles/openai-compatible.env.example` to `profiles/local.env` and edit it | Tool quality depends heavily on the model and provider. |
 
@@ -129,6 +129,14 @@ This assumes your companion MTPLX/Qwen setup is already serving
 itself is not bundled in this repo. If your companion stack exposes a different
 base URL or model name, copy `profiles/openai-compatible.env.example` to
 `profiles/local.env` and set those values explicitly.
+
+To get MTPLX itself, use the upstream
+[MTPLX GitHub repo](https://github.com/youssofal/MTPLX) or
+[mtplx.com](https://mtplx.com/). The local demo used the Qwen3.6 27B MTPLX
+Optimized Quality checkpoint family:
+[Youssofal/Qwen3.6-27B-MTPLX-Optimized-Quality](https://huggingface.co/Youssofal/Qwen3.6-27B-MTPLX-Optimized-Quality).
+Your local server may expose that checkpoint under a shorter alias; the proxy
+only needs the alias in `UPSTREAM_OPENAI_MODEL` to match the running provider.
 
 OpenRouter path:
 

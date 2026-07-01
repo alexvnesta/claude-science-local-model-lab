@@ -92,7 +92,10 @@ property is that the metrics are operational counters and timings only.
 - This repo does not distribute Claude Science or bypass Claude Science beta
   access, sign-in, account entitlement, or organization settings.
 - MTPLX/Qwen is a companion local setup, not bundled here. Public users can
-  reproduce the proxy path with Ollama or another OpenAI-compatible backend,
-  but the exact GIF path requires an equivalent local Qwen server.
+  get MTPLX from <https://github.com/youssofal/MTPLX> or
+  <https://mtplx.com/> and can reproduce the proxy path with Ollama or another
+  OpenAI-compatible backend. The exact GIF path requires an equivalent local
+  Qwen server and a model such as
+  <https://huggingface.co/Youssofal/Qwen3.6-27B-MTPLX-Optimized-Quality>.
 - A provider-only smoke test does not guarantee a full Claude Science workflow.
   The full app prompt is much larger and includes reviewer/harness traffic.
