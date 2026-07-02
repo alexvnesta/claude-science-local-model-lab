@@ -7,9 +7,12 @@ import contextlib
 import errno
 import json
 import os
+import select
 import socket
 import subprocess
 import sys
+import tempfile
+import threading
 import time
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -54,6 +57,22 @@ class FakeOpenAIHandler(BaseHTTPRequestHandler):
     def log_message(self, fmt: str, *args: Any) -> None:
         return
 
+    def _count_request(self, key: str) -> None:
+        lock = getattr(self.server, "request_counts_lock", None)
+        counts = getattr(self.server, "request_counts", None)
+        if lock is None or counts is None:
+            return
+        with lock:
+            counts[key] = counts.get(key, 0) + 1
+
+    def _remember_payload(self, key: str, payload: dict[str, Any]) -> None:
+        lock = getattr(self.server, "request_payloads_lock", None)
+        payloads = getattr(self.server, "request_payloads", None)
+        if lock is None or payloads is None:
+            return
+        with lock:
+            payloads[key] = payload
+
     def _json(self, status: int, payload: dict[str, Any]) -> None:
         body = json.dumps(payload).encode("utf-8")
         self.send_response(status)
@@ -97,8 +116,157 @@ class FakeOpenAIHandler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:  # noqa: N802
         length = int(self.headers.get("Content-Length") or "0")
         payload = json.loads(self.rfile.read(length).decode("utf-8"))
+        if self.path == "/search":
+            self._remember_payload("tavily_search", payload)
+            self._json(
+                200,
+                {
+                    "results": [
+                        {
+                            "title": "Example Source",
+                            "url": "https://example.com/result",
+                            "content": "Example Source says the proxy-owned web search bridge works.",
+                            "score": 0.98,
+                            "published_date": "July 1, 2026",
+                        }
+                    ]
+                },
+            )
+            return
+        if self.path == "/v2/search":
+            self._remember_payload("firecrawl_search", payload)
+            self._json(
+                200,
+                {
+                    "success": True,
+                    "data": {
+                        "web": [
+                            {
+                                "title": "Example Firecrawl Source",
+                                "url": "https://example.com/firecrawl-result",
+                                "description": "Firecrawl says the proxy-owned web search bridge works.",
+                            }
+                        ]
+                    },
+                    "creditsUsed": 2,
+                },
+            )
+            return
         messages = payload.get("messages") or []
         prompt = json.dumps(messages)
+        if not payload.get("stream") and "coalesce proxy owned server web search" in prompt:
+            self._count_request("coalesce_proxy_owned_upstream")
+        if not payload.get("stream") and "proxy owned server web search" in prompt:
+            if (
+                "slow proxy owned server web search" in prompt
+                or "coalesce proxy owned server web search" in prompt
+            ) and not any(
+                isinstance(message, dict) and message.get("role") == "tool"
+                for message in messages
+            ):
+                time.sleep(0.15)
+            if any(
+                message.get("role") == "tool"
+                and (
+                    "Example Source" in str(message.get("content") or "")
+                    or "Example Firecrawl Source" in str(message.get("content") or "")
+                )
+                for message in messages
+                if isinstance(message, dict)
+            ):
+                self._json(
+                    200,
+                    {
+                        "choices": [
+                            {
+                                "message": {
+                                    "role": "assistant",
+                                    "content": "Example Source confirms the bridge works: https://example.com/result",
+                                },
+                                "finish_reason": "stop",
+                            }
+                        ],
+                        "usage": {"prompt_tokens": 11, "completion_tokens": 7},
+                    },
+                )
+                return
+            self._json(
+                200,
+                {
+                    "choices": [
+                        {
+                            "message": {
+                                "role": "assistant",
+                                "content": None,
+                                "tool_calls": [
+                                    {
+                                        "id": "call_proxy_web_search",
+                                        "type": "function",
+                                        "function": {
+                                            "name": "web_search",
+                                            "arguments": json.dumps(
+                                                {"query": "proxy owned server web search"}
+                                            ),
+                                        },
+                                    }
+                                ],
+                            },
+                            "finish_reason": "tool_calls",
+                        }
+                    ],
+                    "usage": {"prompt_tokens": 9, "completion_tokens": 4},
+                },
+            )
+            return
+        if not payload.get("stream") and "proxy owned raw web search" in prompt:
+            if any(
+                message.get("role") == "tool"
+                and (
+                    "Example Source" in str(message.get("content") or "")
+                    or "Example Firecrawl Source" in str(message.get("content") or "")
+                )
+                for message in messages
+                if isinstance(message, dict)
+            ):
+                self._json(
+                    200,
+                    {
+                        "choices": [
+                            {
+                                "message": {
+                                    "role": "assistant",
+                                    "content": (
+                                        "Raw web search bridge works: "
+                                        "https://example.com/result"
+                                    ),
+                                },
+                                "finish_reason": "stop",
+                            }
+                        ],
+                        "usage": {"prompt_tokens": 11, "completion_tokens": 7},
+                    },
+                )
+                return
+            self._json(
+                200,
+                {
+                    "choices": [
+                        {
+                            "message": {
+                                "role": "assistant",
+                                "content": (
+                                    "<call_tool name=\"web_search\">\n"
+                                    "<parameter=query>proxy owned raw web search</parameter>\n"
+                                    "</call_tool>"
+                                ),
+                            },
+                            "finish_reason": "stop",
+                        }
+                    ],
+                    "usage": {"prompt_tokens": 9, "completion_tokens": 4},
+                },
+            )
+            return
         if not payload.get("stream") and "check mtplx background guard" in prompt:
             self._json(
                 200,
@@ -238,6 +406,28 @@ class FakeOpenAIHandler(BaseHTTPRequestHandler):
                 },
             )
             return
+        if not payload.get("stream") and "check exact tool definitions" in prompt:
+            forwarded = [
+                item.get("function", {})
+                for item in payload.get("tools") or []
+                if isinstance(item, dict)
+            ]
+            self._json(
+                200,
+                {
+                    "choices": [
+                        {
+                            "message": {
+                                "role": "assistant",
+                                "content": json.dumps({"tools": forwarded}),
+                            },
+                            "finish_reason": "stop",
+                        }
+                    ],
+                    "usage": {"prompt_tokens": 4, "completion_tokens": 2},
+                },
+            )
+            return
         if not payload.get("stream") and "check mentioned tool choice" in prompt:
             self._json(
                 200,
@@ -316,7 +506,7 @@ class FakeOpenAIHandler(BaseHTTPRequestHandler):
                 },
             )
             return
-        if not payload.get("stream") and "check harness allowlist" in prompt:
+        if not payload.get("stream") and "check harness pass through" in prompt:
             names = [
                 item.get("function", {}).get("name")
                 for item in payload.get("tools") or []
@@ -343,7 +533,7 @@ class FakeOpenAIHandler(BaseHTTPRequestHandler):
                 },
             )
             return
-        if not payload.get("stream") and "check tool allowlist" in prompt:
+        if not payload.get("stream") and "check app-pruned tool pass through" in prompt:
             names = [
                 item.get("function", {}).get("name")
                 for item in payload.get("tools") or []
@@ -357,6 +547,33 @@ class FakeOpenAIHandler(BaseHTTPRequestHandler):
                             "message": {
                                 "role": "assistant",
                                 "content": json.dumps({"tool_names": names}),
+                            },
+                            "finish_reason": "stop",
+                        }
+                    ],
+                    "usage": {"prompt_tokens": 4, "completion_tokens": 2},
+                },
+            )
+            return
+        if not payload.get("stream") and "check server tool omission" in prompt:
+            names = [
+                item.get("function", {}).get("name")
+                for item in payload.get("tools") or []
+                if isinstance(item, dict)
+            ]
+            self._json(
+                200,
+                {
+                    "choices": [
+                        {
+                            "message": {
+                                "role": "assistant",
+                                "content": json.dumps(
+                                    {
+                                        "tool_choice": payload.get("tool_choice"),
+                                        "tool_names": names,
+                                    }
+                                ),
                             },
                             "finish_reason": "stop",
                         }
@@ -721,6 +938,53 @@ class FakeOpenAIHandler(BaseHTTPRequestHandler):
                 },
             )
             return
+        if not payload.get("stream") and "generate plan approve repair native tool" in prompt:
+            self._json(
+                200,
+                {
+                    "choices": [
+                        {
+                            "message": {
+                                "role": "assistant",
+                                "content": None,
+                                "tool_calls": [
+                                    {
+                                        "id": "call_generate_plan_repair",
+                                        "type": "function",
+                                        "function": {
+                                            "name": "generate_plan",
+                                            "arguments": json.dumps(
+                                                {
+                                                    "approve": True,
+                                                    "human_description": (
+                                                        "Generating plan for TE expression"
+                                                    ),
+                                                    "task_summary": (
+                                                        "Plan a public TE expression "
+                                                        "analysis in breast cancer."
+                                                    ),
+                                                    "steps": [
+                                                        {
+                                                            "title": "Inventory datasets",
+                                                            "description": (
+                                                                "Find usable processed TE "
+                                                                "expression resources."
+                                                            ),
+                                                        }
+                                                    ],
+                                                }
+                                            ),
+                                        },
+                                    }
+                                ],
+                            },
+                            "finish_reason": "tool_calls",
+                        }
+                    ],
+                    "usage": {"prompt_tokens": 4, "completion_tokens": 2},
+                },
+            )
+            return
         if not payload.get("stream") and "submit output bullet repair native tool" in prompt:
             self._json(
                 200,
@@ -951,6 +1215,53 @@ class FakeOpenAIHandler(BaseHTTPRequestHandler):
                                     "<parameter=verdict>\npass\n</parameter>\n"
                                     "</function>\n"
                                     "</tool_call>"
+                                ),
+                            },
+                            "finish_reason": "stop",
+                        }
+                    ],
+                    "usage": {"prompt_tokens": 4, "completion_tokens": 4},
+                },
+            )
+            return
+        if not payload.get("stream") and "server loop raw skill text tool call" in prompt:
+            self._json(
+                200,
+                {
+                    "choices": [
+                        {
+                            "message": {
+                                "role": "assistant",
+                                "content": (
+                                    "<tool_call>\n"
+                                    "<function=skill>\n"
+                                    "<parameter=skill>\n"
+                                    "mcp-cellguide\n"
+                                    "</parameter>\n"
+                                    "</function>\n"
+                                    "</tool_call>"
+                                ),
+                            },
+                            "finish_reason": "stop",
+                        }
+                    ],
+                    "usage": {"prompt_tokens": 4, "completion_tokens": 4},
+                },
+            )
+            return
+        if not payload.get("stream") and "server loop call_tool search_skills text tool call" in prompt:
+            self._json(
+                200,
+                {
+                    "choices": [
+                        {
+                            "message": {
+                                "role": "assistant",
+                                "content": (
+                                    "<call_tool name=\"search_skills\">\n"
+                                    "<parameter=query> transposon TE retrotransposon expression analysis\n"
+                                    "</parameter>\n"
+                                    "</call_tool>"
                                 ),
                             },
                             "finish_reason": "stop",
@@ -1259,9 +1570,11 @@ def free_port() -> int:
 
 def start_fake_server() -> tuple[ThreadingHTTPServer, int]:
     server = ThreadingHTTPServer(("127.0.0.1", 0), FakeOpenAIHandler)
+    server.request_counts = {}
+    server.request_counts_lock = threading.Lock()
+    server.request_payloads = {}
+    server.request_payloads_lock = threading.Lock()
     port = int(server.server_address[1])
-    import threading
-
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     return server, port
@@ -1400,7 +1713,9 @@ def assert_direct_stream_heartbeat(proxy_port: int) -> None:
         },
     )
     assert ": heartbeat\n\n" in raw, raw
+    assert "event: ping\ndata: {\"type\":\"ping\"}\n\n" in raw, raw
     events = parse_sse(raw)
+    assert any(name == "ping" and event.get("type") == "ping" for name, event in events), events
     assert stream_text(events) == "slow ok", stream_text(events)
 
 
@@ -1511,6 +1826,58 @@ def search_skills_tool() -> dict[str, Any]:
     }
 
 
+def skill_tool() -> dict[str, Any]:
+    return {
+        "name": "skill",
+        "description": "load skill",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "filter": {"type": "string"},
+                "human_description": {"type": "string"},
+                "skill": {"type": "string"},
+            },
+            "required": ["human_description", "skill"],
+        },
+    }
+
+
+def exact_definition_probe_tool() -> dict[str, Any]:
+    return {
+        "name": "definition_probe",
+        "description": (
+            "Preserve this active tool description exactly; do not trim, summarize, "
+            "or rewrite it before sending the request upstream. "
+            "It includes operational guidance that the model must see."
+        ),
+        "input_schema": {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Exact user-facing lookup request.",
+                },
+                "mode": {
+                    "type": "string",
+                    "enum": ["quick", "deep"],
+                    "description": "Controls whether the tool should do a quick or deep lookup.",
+                },
+                "limits": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "properties": {
+                        "max_rows": {"type": "integer", "minimum": 1},
+                        "include_private": {"type": "boolean"},
+                    },
+                    "required": ["max_rows"],
+                },
+            },
+            "required": ["query", "mode"],
+        },
+    }
+
+
 def python_tool() -> dict[str, Any]:
     return {
         "name": "python",
@@ -1574,12 +1941,39 @@ def submit_output_tool() -> dict[str, Any]:
     }
 
 
+def generate_plan_tool() -> dict[str, Any]:
+    return {
+        "name": "generate_plan",
+        "description": (
+            "Create or revise an execution plan. Use approve=true alone only to approve "
+            "the current plan."
+        ),
+        "input_schema": {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "approve": {"type": "boolean"},
+                "human_description": {"type": "string"},
+                "task_summary": {"type": "string"},
+                "steps": {"type": "array", "items": {"type": "object"}},
+                "desired_outputs": {"type": "array", "items": {"type": "string"}},
+                "feasibility": {"type": "object"},
+            },
+            "required": ["human_description"],
+        },
+    }
+
+
 def generic_tool(name: str) -> dict[str, Any]:
     return {
         "name": name,
         "description": f"{name} tool",
         "input_schema": {"type": "object"},
     }
+
+
+def anthropic_server_web_search_tool() -> dict[str, Any]:
+    return {"type": "web_search_20250305", "name": "web_search"}
 
 
 def assert_invalid_native_tool_filtered(proxy_port: int, prompt: str) -> None:
@@ -1685,6 +2079,27 @@ def assert_submit_output_bullets_repaired(proxy_port: int) -> None:
     ], payload
 
 
+def assert_generate_plan_approve_content_repaired(proxy_port: int) -> None:
+    raw = post_json(
+        f"http://127.0.0.1:{proxy_port}/v1/messages",
+        {
+            "model": "claude-opus-4-8",
+            "max_tokens": 64,
+            "tools": [generate_plan_tool()],
+            "messages": [
+                {"role": "user", "content": "generate plan approve repair native tool"}
+            ],
+        },
+    )
+    payload = json.loads(raw)
+    assert payload["stop_reason"] == "tool_use", payload
+    block = payload["content"][0]
+    assert block["name"] == "generate_plan", payload
+    assert block["input"]["task_summary"].startswith("Plan a public TE expression"), payload
+    assert block["input"]["steps"][0]["title"] == "Inventory datasets", payload
+    assert "approve" not in block["input"], payload
+
+
 def assert_claude_science_tool_compat(proxy_port: int) -> None:
     raw = post_json(
         f"http://127.0.0.1:{proxy_port}/v1/messages",
@@ -1749,6 +2164,28 @@ def assert_tool_choice_required(proxy_port: int) -> None:
     assert upstream_seen["tool_count"] == 1, upstream_seen
 
 
+def assert_active_tool_definitions_are_lossless(proxy_port: int) -> None:
+    tool = exact_definition_probe_tool()
+    raw = post_json(
+        f"http://127.0.0.1:{proxy_port}/v1/messages",
+        {
+            "model": "claude-opus-4-8",
+            "max_tokens": 64,
+            "tools": [tool],
+            "messages": [{"role": "user", "content": "check exact tool definitions"}],
+        },
+    )
+    payload = json.loads(raw)
+    upstream_seen = json.loads(payload["content"][0]["text"])
+    assert upstream_seen["tools"] == [
+        {
+            "name": tool["name"],
+            "description": tool["description"],
+            "parameters": tool["input_schema"],
+        }
+    ], upstream_seen
+
+
 def assert_app_pruned_foreground_tools_pass_through(proxy_port: int) -> None:
     raw = post_json(
         f"http://127.0.0.1:{proxy_port}/v1/messages",
@@ -1759,7 +2196,7 @@ def assert_app_pruned_foreground_tools_pass_through(proxy_port: int) -> None:
                 generic_tool(name)
                 for name in APP_PRUNED_FOREGROUND_TOOL_NAMES
             ],
-            "messages": [{"role": "user", "content": "check tool allowlist"}],
+            "messages": [{"role": "user", "content": "check app-pruned tool pass through"}],
         },
     )
     payload = json.loads(raw)
@@ -1767,7 +2204,266 @@ def assert_app_pruned_foreground_tools_pass_through(proxy_port: int) -> None:
     assert upstream_seen["tool_names"] == APP_PRUNED_FOREGROUND_TOOL_NAMES, upstream_seen
 
 
-def assert_harness_tool_specific_allowlist(proxy_port: int) -> None:
+def assert_anthropic_server_tools_are_not_forwarded(proxy_port: int) -> None:
+    raw = post_json(
+        f"http://127.0.0.1:{proxy_port}/v1/messages",
+        {
+            "model": "claude-opus-4-8",
+            "max_tokens": 64,
+            "tool_choice": {"type": "tool", "name": "web_search"},
+            "tools": [
+                anthropic_server_web_search_tool(),
+                bash_tool(),
+            ],
+            "messages": [{"role": "user", "content": "check server tool omission"}],
+        },
+    )
+    payload = json.loads(raw)
+    upstream_seen = json.loads(payload["content"][0]["text"])
+    assert upstream_seen["tool_names"] == ["bash"], upstream_seen
+    assert upstream_seen["tool_choice"] is None, upstream_seen
+
+
+def assert_proxy_owned_server_web_search(
+    proxy_port: int, fake_server: ThreadingHTTPServer
+) -> None:
+    raw = post_json(
+        f"http://127.0.0.1:{proxy_port}/v1/messages",
+        {
+            "model": "claude-opus-4-8",
+            "stream": True,
+            "max_tokens": 128,
+            "tool_choice": {"type": "tool", "name": "web_search"},
+            "tools": [
+                {
+                    **anthropic_server_web_search_tool(),
+                    "max_uses": 2,
+                    "allowed_domains": ["example.com"],
+                    "blocked_domains": ["blocked.example"],
+                }
+            ],
+            "messages": [{"role": "user", "content": "proxy owned server web search"}],
+        },
+    )
+    events = parse_sse(raw)
+    starts = [
+        event.get("content_block", {})
+        for name, event in events
+        if name == "content_block_start"
+    ]
+    assert any(block.get("type") == "server_tool_use" for block in starts), events
+    results = [
+        block
+        for block in starts
+        if block.get("type") == "web_search_tool_result"
+    ]
+    assert results, events
+    assert results[0]["content"][0]["url"] == "https://example.com/result", results
+    assert "Example Source confirms" in stream_text(events), stream_text(events)
+    tavily_payload = fake_request_payload(fake_server, "tavily_search")
+    assert tavily_payload["include_domains"] == ["example.com"], tavily_payload
+    assert "exclude_domains" not in tavily_payload, tavily_payload
+    assert not any(block.get("type") == "tool_use" for block in starts), events
+    usage_events = [
+        event
+        for name, event in events
+        if name == "message_delta"
+    ]
+    assert usage_events[-1]["usage"]["server_tool_use"]["web_search_requests"] == 1, usage_events
+
+    health = get_json(f"http://127.0.0.1:{proxy_port}/healthz")
+    assert health["server_web_search"]["mode"] == "tavily", health
+    assert health["server_web_search"]["tavily_key_set"] is True, health
+    assert health["metrics"]["messages_by_stream_mode"].get("server_tool_loop", 0) >= 1, health
+
+
+def assert_proxy_owned_raw_server_web_search(proxy_port: int) -> None:
+    raw = post_json(
+        f"http://127.0.0.1:{proxy_port}/v1/messages",
+        {
+            "model": "claude-opus-4-8",
+            "stream": True,
+            "max_tokens": 128,
+            "tool_choice": {"type": "tool", "name": "web_search"},
+            "tools": [
+                {
+                    **anthropic_server_web_search_tool(),
+                    "max_uses": 2,
+                    "allowed_domains": ["example.com"],
+                }
+            ],
+            "messages": [{"role": "user", "content": "proxy owned raw web search"}],
+        },
+    )
+    events = parse_sse(raw)
+    starts = [
+        event.get("content_block", {})
+        for name, event in events
+        if name == "content_block_start"
+    ]
+    server_uses = [block for block in starts if block.get("type") == "server_tool_use"]
+    assert server_uses, events
+    assert server_uses[0]["name"] == "web_search", server_uses
+    results = [
+        block
+        for block in starts
+        if block.get("type") == "web_search_tool_result"
+    ]
+    assert results, events
+    assert results[0]["content"][0]["url"] == "https://example.com/result", results
+    assert "Raw web search bridge works" in stream_text(events), stream_text(events)
+    assert "cannot call that tool from this local profile" not in stream_text(events), events
+    health = get_json(f"http://127.0.0.1:{proxy_port}/healthz")
+    assert health["metrics"]["messages_by_stream_mode"].get("server_tool_loop", 0) >= 1, health
+
+
+def assert_proxy_owned_server_web_search_stream_heartbeat(proxy_port: int) -> None:
+    raw = post_json(
+        f"http://127.0.0.1:{proxy_port}/v1/messages",
+        {
+            "model": "claude-opus-4-8",
+            "stream": True,
+            "max_tokens": 128,
+            "tool_choice": {"type": "tool", "name": "web_search"},
+            "tools": [
+                {
+                    **anthropic_server_web_search_tool(),
+                    "max_uses": 2,
+                    "allowed_domains": ["example.com"],
+                }
+            ],
+            "messages": [{"role": "user", "content": "slow proxy owned server web search"}],
+        },
+    )
+    assert ": heartbeat\n\n" in raw, raw
+    assert "event: ping\ndata: {\"type\":\"ping\"}\n\n" in raw, raw
+    assert raw.index("event: message_start") < raw.index(": heartbeat"), raw
+    assert raw.index(": heartbeat") < raw.index("event: content_block_start"), raw
+    assert raw.index("event: ping") < raw.index("event: content_block_start"), raw
+    events = parse_sse(raw)
+    names = [name for name, _ in events]
+    assert names.count("message_start") == 1, names
+    starts = [
+        event.get("content_block", {})
+        for name, event in events
+        if name == "content_block_start"
+    ]
+    assert any(block.get("type") == "server_tool_use" for block in starts), events
+    assert "Example Source confirms" in stream_text(events), stream_text(events)
+
+
+def fake_request_count(server: ThreadingHTTPServer, key: str) -> int:
+    lock = getattr(server, "request_counts_lock")
+    counts = getattr(server, "request_counts")
+    with lock:
+        return int(counts.get(key, 0))
+
+
+def fake_request_payload(server: ThreadingHTTPServer, key: str) -> dict[str, Any]:
+    lock = getattr(server, "request_payloads_lock")
+    payloads = getattr(server, "request_payloads")
+    with lock:
+        payload = payloads.get(key)
+    assert isinstance(payload, dict), (key, payloads)
+    return payload
+
+
+def proxy_owned_web_search_payload(prompt: str) -> dict[str, Any]:
+    return {
+        "model": "claude-opus-4-8",
+        "stream": True,
+        "max_tokens": 128,
+        "tool_choice": {"type": "tool", "name": "web_search"},
+        "tools": [
+            {
+                **anthropic_server_web_search_tool(),
+                "max_uses": 2,
+                "allowed_domains": ["example.com"],
+            }
+        ],
+        "messages": [{"role": "user", "content": prompt}],
+    }
+
+
+def assert_server_tool_loop_retry_reuses_finished_job(
+    proxy_port: int, fake_server: ThreadingHTTPServer
+) -> None:
+    payload = proxy_owned_web_search_payload("coalesce proxy owned server web search")
+    request = urllib.request.Request(
+        f"http://127.0.0.1:{proxy_port}/v1/messages",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={
+            "Content-Type": "application/json",
+            "anthropic-version": "2023-06-01",
+        },
+        method="POST",
+    )
+    response = urllib.request.urlopen(request, timeout=10)
+    seen = ""
+    deadline = time.monotonic() + 5
+    try:
+        while "event: ping" not in seen and time.monotonic() < deadline:
+            line = response.readline().decode("utf-8", "replace")
+            if not line:
+                break
+            seen += line
+    finally:
+        response.close()
+    assert "event: ping" in seen, seen
+
+    time.sleep(0.35)
+    assert fake_request_count(fake_server, "coalesce_proxy_owned_upstream") == 2
+
+    raw = post_json(f"http://127.0.0.1:{proxy_port}/v1/messages", payload)
+    events = parse_sse(raw)
+    assert "Example Source confirms" in stream_text(events), stream_text(events)
+    assert fake_request_count(fake_server, "coalesce_proxy_owned_upstream") == 2
+
+
+def assert_proxy_owned_server_web_search_firecrawl(
+    proxy_port: int, fake_server: ThreadingHTTPServer
+) -> None:
+    raw = post_json(
+        f"http://127.0.0.1:{proxy_port}/v1/messages",
+        {
+            "model": "claude-opus-4-8",
+            "stream": True,
+            "max_tokens": 128,
+            "tool_choice": {"type": "tool", "name": "web_search"},
+            "tools": [
+                {
+                    **anthropic_server_web_search_tool(),
+                    "max_uses": 2,
+                    "allowed_domains": ["example.com"],
+                    "blocked_domains": ["blocked.example"],
+                }
+            ],
+            "messages": [{"role": "user", "content": "proxy owned server web search"}],
+        },
+    )
+    events = parse_sse(raw)
+    starts = [
+        event.get("content_block", {})
+        for name, event in events
+        if name == "content_block_start"
+    ]
+    results = [
+        block
+        for block in starts
+        if block.get("type") == "web_search_tool_result"
+    ]
+    assert results, events
+    assert results[0]["content"][0]["url"] == "https://example.com/firecrawl-result", results
+    assert "Example Source confirms" in stream_text(events), stream_text(events)
+    firecrawl_payload = fake_request_payload(fake_server, "firecrawl_search")
+    assert firecrawl_payload["includeDomains"] == ["example.com"], firecrawl_payload
+    assert "excludeDomains" not in firecrawl_payload, firecrawl_payload
+    health = get_json(f"http://127.0.0.1:{proxy_port}/healthz")
+    assert health["server_web_search"]["mode"] == "firecrawl", health
+    assert health["server_web_search"]["firecrawl_key_set"] is True, health
+
+
+def assert_harness_tools_pass_through(proxy_port: int) -> None:
     raw = post_json(
         f"http://127.0.0.1:{proxy_port}/v1/messages",
         {
@@ -1780,19 +2476,21 @@ def assert_harness_tool_specific_allowlist(proxy_port: int) -> None:
                 read_file_tool(),
                 submit_output_tool(),
             ],
-            "messages": [{"role": "user", "content": "check harness allowlist"}],
+            "messages": [{"role": "user", "content": "check harness pass through"}],
         },
     )
     payload = json.loads(raw)
     upstream_seen = json.loads(payload["content"][0]["text"])
     assert upstream_seen["tool_names"] == [
+        "bash",
+        "search_skills",
         "repl",
         "read_file",
         "submit_output",
     ], upstream_seen
 
 
-def assert_streamed_harness_uses_reviewer_allowlist(proxy_port: int) -> None:
+def assert_streamed_harness_tools_pass_through(proxy_port: int) -> None:
     raw = post_json(
         f"http://127.0.0.1:{proxy_port}/v1/messages",
         {
@@ -1813,6 +2511,8 @@ def assert_streamed_harness_uses_reviewer_allowlist(proxy_port: int) -> None:
     events = parse_sse(raw)
     upstream_seen = json.loads(stream_text(events))
     assert upstream_seen["tool_names"] == [
+        "bash",
+        "search_skills",
         "repl",
         "read_file",
         "submit_output",
@@ -1821,75 +2521,6 @@ def assert_streamed_harness_uses_reviewer_allowlist(proxy_port: int) -> None:
     metrics = get_json(f"http://127.0.0.1:{proxy_port}/healthz")["metrics"]
     assert metrics["messages_by_kind"].get("harness", 0) >= 1, metrics
     assert metrics["messages_by_stream_mode"].get("direct", 0) >= 1, metrics
-
-
-def assert_harness_closeout_forces_submit_only(proxy_port: int) -> None:
-    raw = post_json(
-        f"http://127.0.0.1:{proxy_port}/v1/messages",
-        {
-            "model": "claude-opus-4-8",
-            "max_tokens": 64,
-            "tools": [
-                search_skills_tool(),
-                repl_tool(),
-                read_file_tool(),
-                submit_output_tool(),
-            ],
-            "messages": [
-                {"role": "user", "content": "review output"},
-                {
-                    "role": "assistant",
-                    "content": [
-                        {
-                            "type": "tool_use",
-                            "id": "toolu_repl_1",
-                            "name": "repl",
-                            "input": {"human_description": "Inspect TSV", "code": "print('ok')"},
-                        }
-                    ],
-                },
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "tool_result",
-                            "tool_use_id": "toolu_repl_1",
-                            "content": "ok",
-                        }
-                    ],
-                },
-                {
-                    "role": "assistant",
-                    "content": [
-                        {
-                            "type": "tool_use",
-                            "id": "toolu_read_1",
-                            "name": "read_file",
-                            "input": {"human_description": "Inspect figure", "version_id": "v1"},
-                        }
-                    ],
-                },
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "tool_result",
-                            "tool_use_id": "toolu_read_1",
-                            "content": "ok",
-                        },
-                        {"type": "text", "text": "check harness allowlist"},
-                    ],
-                },
-            ],
-        },
-    )
-    payload = json.loads(raw)
-    upstream_seen = json.loads(payload["content"][0]["text"])
-    assert upstream_seen["tool_names"] == ["submit_output"], upstream_seen
-    assert upstream_seen["tool_choice"] == {
-        "type": "function",
-        "function": {"name": "submit_output"},
-    }, upstream_seen
 
 
 def assert_single_harness_tool_forced(proxy_port: int) -> None:
@@ -2149,6 +2780,99 @@ def assert_text_tool_call_adapter(
     assert block["input"]["verdict"] == expected_verdict, payload
 
 
+def assert_server_loop_raw_skill_text_tool_repaired(proxy_port: int) -> None:
+    raw = post_json(
+        f"http://127.0.0.1:{proxy_port}/v1/messages",
+        {
+            "model": "claude-opus-4-8",
+            "stream": True,
+            "max_tokens": 64,
+            "tools": [
+                {**anthropic_server_web_search_tool(), "max_uses": 1},
+                skill_tool(),
+                search_skills_tool(),
+            ],
+            "messages": [
+                {"role": "user", "content": "server loop raw skill text tool call"}
+            ],
+        },
+    )
+    events = parse_sse(raw)
+    tool_starts = [
+        event.get("content_block", {})
+        for name, event in events
+        if name == "content_block_start"
+        and event.get("content_block", {}).get("type") == "tool_use"
+    ]
+    assert len(tool_starts) == 1, events
+    assert tool_starts[0]["name"] == "skill", events
+    input_deltas = [
+        event["delta"]["partial_json"]
+        for name, event in events
+        if name == "content_block_delta"
+        and event.get("delta", {}).get("type") == "input_json_delta"
+    ]
+    assert input_deltas, events
+    tool_input = json.loads(input_deltas[0])
+    assert tool_input["skill"] == "mcp-cellguide", tool_input
+    assert tool_input["human_description"].startswith("Local proxy repaired"), tool_input
+    assert "cannot call that tool from this local profile" not in stream_text(events), events
+    stop = [
+        event["delta"]["stop_reason"]
+        for name, event in events
+        if name == "message_delta"
+    ]
+    assert stop == ["tool_use"], events
+
+
+def assert_server_loop_call_tool_text_tool_repaired(proxy_port: int) -> None:
+    raw = post_json(
+        f"http://127.0.0.1:{proxy_port}/v1/messages",
+        {
+            "model": "claude-opus-4-8",
+            "stream": True,
+            "max_tokens": 64,
+            "tools": [
+                {**anthropic_server_web_search_tool(), "max_uses": 1},
+                skill_tool(),
+                search_skills_tool(),
+            ],
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "server loop call_tool search_skills text tool call",
+                }
+            ],
+        },
+    )
+    events = parse_sse(raw)
+    tool_starts = [
+        event.get("content_block", {})
+        for name, event in events
+        if name == "content_block_start"
+        and event.get("content_block", {}).get("type") == "tool_use"
+    ]
+    assert len(tool_starts) == 1, events
+    assert tool_starts[0]["name"] == "search_skills", events
+    input_deltas = [
+        event["delta"]["partial_json"]
+        for name, event in events
+        if name == "content_block_delta"
+        and event.get("delta", {}).get("type") == "input_json_delta"
+    ]
+    assert input_deltas, events
+    tool_input = json.loads(input_deltas[0])
+    assert tool_input["query"] == "transposon TE retrotransposon expression analysis", tool_input
+    assert tool_input["human_description"].startswith("Local proxy repaired"), tool_input
+    assert "cannot call that tool from this local profile" not in stream_text(events), events
+    stop = [
+        event["delta"]["stop_reason"]
+        for name, event in events
+        if name == "message_delta"
+    ]
+    assert stop == ["tool_use"], events
+
+
 def assert_dropped_tool_guard(proxy_port: int) -> None:
     raw = post_json(
         f"http://127.0.0.1:{proxy_port}/v1/messages",
@@ -2347,11 +3071,121 @@ def assert_health_metrics(proxy_port: int) -> None:
     assert payload["stream_heartbeat_seconds"] == 0.05, payload
 
 
+def assert_request_debug_capture(fake_port: int) -> None:
+    with tempfile.TemporaryDirectory() as temp_dir:
+        temp = Path(temp_dir)
+        shape_path = temp / "request-shape.jsonl"
+        raw_dir = temp / "raw-captures"
+        proxy_port = free_port()
+        proc = start_proxy_process(
+            fake_port,
+            proxy_port,
+            "pass",
+            [
+                "--request-shape-log-path",
+                str(shape_path),
+                "--raw-request-capture-dir",
+                str(raw_dir),
+            ],
+        )
+        try:
+            wait_for_proxy(proxy_port, proc)
+            health = get_json(f"http://127.0.0.1:{proxy_port}/healthz")
+            assert health["request_shape_log_path"] == "<enabled:request-shape.jsonl>", health
+            assert health["raw_request_capture_dir"] == "<enabled:raw-captures>", health
+            assert str(temp) not in json.dumps(health), health
+            assert proc.stderr is not None
+            ready, _, _ = select.select([proc.stderr], [], [], 0)
+            if ready:
+                startup_log = os.read(proc.stderr.fileno(), 8192).decode("utf-8", "replace")
+                assert str(temp) not in startup_log, startup_log
+                assert "<enabled:request-shape.jsonl>" in startup_log, startup_log
+
+            raw = post_json(
+                f"http://127.0.0.1:{proxy_port}/v1/messages",
+                {
+                    "model": "claude-opus-4-8",
+                    "system": [{"type": "text", "text": "private system text"}],
+                    "max_tokens": 64,
+                    "tools": [search_skills_tool()],
+                    "messages": [
+                        {
+                            "role": "user",
+                            "content": [
+                                {"type": "text", "text": "private user text"},
+                            ],
+                        }
+                    ],
+                },
+            )
+            payload = json.loads(raw)
+            assert payload["content"][0]["text"] == "nonstream ok", payload
+
+            lines = shape_path.read_text(encoding="utf-8").splitlines()
+            assert len(lines) == 1, lines
+            record = json.loads(lines[0])
+            rendered_record = json.dumps(record)
+            assert "private system text" not in rendered_record, record
+            assert "private user text" not in rendered_record, record
+            assert record["request_id"].startswith("req_"), record
+            assert record["kind"] == "tool_agent", record
+            assert record["anthropic"]["system"]["text_chars"] == len("private system text")
+            assert record["anthropic"]["messages"][0]["content"]["text_chars"] == len("private user text")
+            assert record["anthropic"]["tools"]["tool_count"] == 1
+            assert record["anthropic"]["tools"]["description_chars"] > 0
+            assert record["anthropic"]["tools"]["schema_json_chars"] > 0
+            assert record["anthropic"]["tools"]["definition_json_chars"] > (
+                record["anthropic"]["tools"]["description_chars"]
+                + record["anthropic"]["tools"]["schema_json_chars"]
+            )
+            assert record["anthropic"]["tools"]["tools"][0]["definition_json_chars"] > (
+                record["anthropic"]["tools"]["tools"][0]["description_chars"]
+                + record["anthropic"]["tools"]["tools"][0]["schema_json_chars"]
+            )
+            assert record["openai"]["message_text_chars"] == (
+                len("private system text") + len("private user text")
+            )
+            cache_candidate = record["openai"]["cache_candidate"]
+            assert cache_candidate["version"] == 1, cache_candidate
+            assert cache_candidate["split_strategy"] == "before_last_user_message", cache_candidate
+            assert cache_candidate["prefix_message_count"] == 1, cache_candidate
+            assert cache_candidate["tail_message_count"] == 1, cache_candidate
+            assert cache_candidate["prefix_roles"] == ["system"], cache_candidate
+            assert cache_candidate["tail_roles"] == ["user"], cache_candidate
+            assert cache_candidate["prefix_json_chars"] > 0, cache_candidate
+            assert cache_candidate["tail_json_chars"] > 0, cache_candidate
+            assert cache_candidate["estimated_prefix_tokens"] > 0, cache_candidate
+            assert cache_candidate["estimated_tail_tokens"] > 0, cache_candidate
+            assert cache_candidate["estimated_full_prompt_tokens"] > 0, cache_candidate
+            assert cache_candidate["context_pressure"] == "ok", cache_candidate
+            assert len(cache_candidate["prefix_hash"]) == 24, cache_candidate
+            assert len(cache_candidate["tail_hash"]) == 24, cache_candidate
+            assert len(cache_candidate["tools_hash"]) == 24, cache_candidate
+
+            raw_files = sorted(raw_dir.glob("*.json"))
+            assert [path.name.rsplit(".", 2)[-2:] for path in raw_files] == [
+                ["anthropic", "json"],
+                ["openai", "json"],
+            ], raw_files
+            assert raw_dir.stat().st_mode & 0o777 == 0o700
+            assert all((path.stat().st_mode & 0o777) == 0o600 for path in raw_files)
+            raw_text = "\n".join(path.read_text(encoding="utf-8") for path in raw_files)
+            assert "private system text" in raw_text
+            assert "private user text" in raw_text
+        finally:
+            proc.terminate()
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+
+
 def start_proxy_process(
     fake_port: int,
     proxy_port: int,
     tool_mode: str,
     extra_args: list[str] | None = None,
+    extra_env: dict[str, str] | None = None,
 ) -> subprocess.Popen[bytes]:
     args = [
         sys.executable,
@@ -2373,9 +3207,13 @@ def start_proxy_process(
     ]
     if extra_args:
         args.extend(extra_args)
+    env = os.environ.copy()
+    if extra_env:
+        env.update(extra_env)
     return subprocess.Popen(
         args,
         cwd=ROOT,
+        env=env,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
     )
@@ -2450,6 +3288,7 @@ def main() -> int:
         assert_valid_python_tool_allowed(proxy_port)
         assert_metadata_tool_repaired(proxy_port)
         assert_submit_output_bullets_repaired(proxy_port)
+        assert_generate_plan_approve_content_repaired(proxy_port)
         assert_dropped_tool_guard(proxy_port)
         assert_text_tool_call_adapter(proxy_port, "text tool call")
         assert_text_tool_call_adapter(proxy_port, "text json tool call")
@@ -2546,11 +3385,15 @@ def main() -> int:
         except subprocess.TimeoutExpired:
             mtplx_guard_proc.kill()
 
+    assert_request_debug_capture(fake_port)
+
     pass_proxy_port = free_port()
     pass_proc = start_proxy_process(fake_port, pass_proxy_port, "pass")
     try:
         wait_for_proxy(pass_proxy_port, pass_proc)
+        assert_active_tool_definitions_are_lossless(pass_proxy_port)
         assert_app_pruned_foreground_tools_pass_through(pass_proxy_port)
+        assert_anthropic_server_tools_are_not_forwarded(pass_proxy_port)
         assert_tool_choice_required(pass_proxy_port)
         assert_single_harness_tool_forced(pass_proxy_port)
         assert_completed_harness_tool_not_forced(pass_proxy_port)
@@ -2561,29 +3404,108 @@ def main() -> int:
         except subprocess.TimeoutExpired:
             pass_proc.kill()
 
-    harness_allowlist_proxy_port = free_port()
-    harness_allowlist_proc = start_proxy_process(
+    web_search_proxy_port = free_port()
+    web_search_proc = start_proxy_process(
         fake_port,
-        harness_allowlist_proxy_port,
+        web_search_proxy_port,
         "pass",
         [
-            "--harness-tool-allowlist",
-            "repl,read_file,submit_output",
-            "--harness-force-submit-after-tool-results",
+            "--server-web-search",
+            "tavily",
+            "--server-web-search-max-results",
+            "3",
+            "--server-web-search-max-uses",
             "2",
+            "--tavily-base-url",
+            f"http://127.0.0.1:{fake_port}",
+            "--stream-heartbeat-seconds",
+            "0.05",
         ],
+        {"TAVILY_API_KEY": "test-tavily-key"},
     )
     try:
-        wait_for_proxy(harness_allowlist_proxy_port, harness_allowlist_proc)
-        assert_harness_tool_specific_allowlist(harness_allowlist_proxy_port)
-        assert_streamed_harness_uses_reviewer_allowlist(harness_allowlist_proxy_port)
-        assert_harness_closeout_forces_submit_only(harness_allowlist_proxy_port)
+        wait_for_proxy(web_search_proxy_port, web_search_proc)
+        assert_proxy_owned_server_web_search(web_search_proxy_port, fake_server)
+        assert_proxy_owned_raw_server_web_search(web_search_proxy_port)
+        assert_proxy_owned_server_web_search_stream_heartbeat(web_search_proxy_port)
+        assert_server_tool_loop_retry_reuses_finished_job(web_search_proxy_port, fake_server)
+        assert_server_loop_raw_skill_text_tool_repaired(web_search_proxy_port)
+        assert_server_loop_call_tool_text_tool_repaired(web_search_proxy_port)
     finally:
-        harness_allowlist_proc.terminate()
+        web_search_proc.terminate()
         try:
-            harness_allowlist_proc.wait(timeout=5)
+            web_search_proc.wait(timeout=5)
         except subprocess.TimeoutExpired:
-            harness_allowlist_proc.kill()
+            web_search_proc.kill()
+
+    firecrawl_proxy_port = free_port()
+    firecrawl_proc = start_proxy_process(
+        fake_port,
+        firecrawl_proxy_port,
+        "pass",
+        [
+            "--server-web-search",
+            "firecrawl",
+            "--server-web-search-max-results",
+            "3",
+            "--server-web-search-max-uses",
+            "2",
+            "--firecrawl-base-url",
+            f"http://127.0.0.1:{fake_port}",
+        ],
+        {"FIRECRAWL_API_KEY": "test-firecrawl-key"},
+    )
+    try:
+        wait_for_proxy(firecrawl_proxy_port, firecrawl_proc)
+        assert_proxy_owned_server_web_search_firecrawl(firecrawl_proxy_port, fake_server)
+    finally:
+        firecrawl_proc.terminate()
+        try:
+            firecrawl_proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            firecrawl_proc.kill()
+
+    web_search_no_text_parse_proxy_port = free_port()
+    web_search_no_text_parse_proc = start_proxy_process(
+        fake_port,
+        web_search_no_text_parse_proxy_port,
+        "pass",
+        [
+            "--parse-text-tool-calls",
+            "0",
+            "--server-web-search",
+            "tavily",
+            "--server-web-search-max-results",
+            "3",
+            "--server-web-search-max-uses",
+            "2",
+            "--tavily-base-url",
+            f"http://127.0.0.1:{fake_port}",
+        ],
+        {"TAVILY_API_KEY": "test-tavily-key"},
+    )
+    try:
+        wait_for_proxy(web_search_no_text_parse_proxy_port, web_search_no_text_parse_proc)
+        assert_proxy_owned_raw_server_web_search(web_search_no_text_parse_proxy_port)
+    finally:
+        web_search_no_text_parse_proc.terminate()
+        try:
+            web_search_no_text_parse_proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            web_search_no_text_parse_proc.kill()
+
+    harness_proxy_port = free_port()
+    harness_proc = start_proxy_process(fake_port, harness_proxy_port, "pass")
+    try:
+        wait_for_proxy(harness_proxy_port, harness_proc)
+        assert_harness_tools_pass_through(harness_proxy_port)
+        assert_streamed_harness_tools_pass_through(harness_proxy_port)
+    finally:
+        harness_proc.terminate()
+        try:
+            harness_proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            harness_proc.kill()
 
     force_proxy_port = free_port()
     force_proc = start_proxy_process(

@@ -49,15 +49,9 @@ looks like this:
   },
   "stream_mode": "buffered",
   "tool_mode": "pass",
+  "request_shape_log_path": "<enabled:request-shape-capture.jsonl>",
+  "raw_request_capture_dir": "",
   "harness_tools": ["submit_output"],
-  "harness_tool_allowlist": [
-    "repl",
-    "read_file",
-    "boundary",
-    "summary_query",
-    "query_target_history",
-    "submit_output"
-  ],
   "metrics": {
     "requests_total": 3,
     "messages_by_kind": {

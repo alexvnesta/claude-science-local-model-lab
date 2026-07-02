@@ -15,8 +15,8 @@ The gap this repo addresses is narrower: Claude Science appears to exercise a
 Claude-like Messages path, but it also emits distinct foreground, hidden-tool,
 and reviewer/harness request shapes. The reviewer/harness path needs structural
 tools such as `submit_output`, and live Qwen reviewer frames also needed
-artifact-inspection tools and closeout policy. None of the reviewed projects
-directly targets Claude Science's foreground/reviewer split.
+artifact-inspection tools. None of the reviewed projects directly targets this
+Claude Science request-shape mix.
 
 ## Reviewed Projects
 
@@ -49,7 +49,7 @@ Repo: [raine/claude-code-proxy](https://github.com/raine/claude-code-proxy)
 
 License: MIT
 
-Reviewed commit: `24cf55825cb40a72345dc59a88b040e8cdb54f84`
+Reviewed commit: `d268aa55129c3d51db485a62a68c55e7cb524a6b`
 
 Relevant traits:
 
@@ -59,13 +59,29 @@ Relevant traits:
   compatibility, monitor UI, and tests.
 - Always talks to upstream providers with streaming requests and recommends
   disabling Claude Code non-streaming fallback.
+- Uses the Codex Responses endpoint, not generic OpenAI Chat Completions.
+- Translates Claude Code's hosted `web_search_20250305` tool into Codex's
+  native Responses `web_search` tool, including non-empty domain filters and
+  forced `tool_choice` mapping.
+- Translates Codex `web_search_call` output events back into Anthropic
+  `server_tool_use` and `web_search_tool_result` content blocks, with
+  `usage.server_tool_use.web_search_requests` accounting.
+- Requests Codex reasoning summaries when reasoning effort is enabled and emits
+  those summaries as Anthropic `thinking` blocks when Codex provides them.
+- Has opt-in `previous_response_id` continuation for append-only Codex turns,
+  with stale-state fallback to full-history requests.
 
 Takeaway for this repo:
 
-This is the strongest streaming-state-machine reference. Our proxy currently
-keeps the implementation dependency-free and simpler, with configurable
-`direct` versus `buffered` streaming plus tested direct-stream heartbeats
-because MTPLX/Qwen direct streaming was not the known-good app path in testing.
+This is the strongest reference for a native OpenAI Responses bridge. The most
+important lesson is that Anthropic hosted tools need a typed provider capability
+boundary: a Responses-capable provider can map hosted search to native
+`web_search`, while a generic Chat Completions provider such as local MTPLX
+cannot honestly expose that capability unless the proxy executes search itself.
+Our current MTPLX path therefore omits unsupported hosted server tools instead
+of pretending they are ordinary OpenAI functions. Borrow the typed server-tool
+model, event reducer, reasoning-summary mapping, cancellation discipline, and
+continuation-state tests if this repo adds a Codex/Responses provider.
 
 ### routatic/proxy
 
@@ -245,8 +261,8 @@ This repo's unique implementation work is the Claude Science local lab:
   `harness`.
 - Separate harness tool list, defaulting to `submit_output`, for structural
   reviewer requests.
-- Reviewer-specific tool allowlist and opt-in reviewer closeout forcing for
-  local models that over-inspect instead of submitting structured review.
+- Tool pass-through that preserves the request-specific tool surface Claude
+  Science offered, without proxy-side task profiles or reviewer allowlists.
 - Schema validation against the request's offered tool schemas.
 - Narrow metadata-only repair for missing `human_description`.
 - Python sanity filtering for observed malformed local-model execution calls.

@@ -13,11 +13,11 @@ prompts, tool outputs, or artifacts.
 Traditional Claude Code proxies mostly translate one chat/tool loop from an
 Anthropic-shaped client to another provider. Claude Science is different: in
 observed runs it sends separate foreground-agent, hidden-tool, tool-agent, and
-reviewer/harness requests. This proxy preserves those request kinds, keeps
-reviewer tools such as `submit_output` separate from foreground tools such as
-`python` and `save_artifacts`, validates returned tool calls against the exact
-schemas Claude Science offered, and runs against a copied local app so the
-official Claude Science install stays untouched.
+reviewer/harness requests. This proxy preserves those request shapes, forwards
+the tool surface Claude Science offered for the current request, validates
+returned tool calls against the exact schemas Claude Science offered, and runs
+against a copied local app so the official Claude Science install stays
+untouched.
 
 If you only want the architecture distinction, read
 [`docs/why-this-proxy.md`](docs/why-this-proxy.md).
@@ -37,8 +37,12 @@ Most public proxies target Claude Code-style chat. This one is narrower: it
 adapts the request shapes Claude Science actually emits.
 
 - Brokers foreground, hidden-tool, tool-agent, and reviewer/harness requests.
-- Keeps reviewer tools such as `submit_output` separate from foreground tools
-  such as `python` and `save_artifacts`.
+- Forwards the tools Claude Science offered on the current request instead of
+  inventing proxy-side task profiles.
+- Omits unsupported Anthropic server-side tools such as dated `web_fetch` by
+  default. Dated `web_search` can be enabled as proxy-owned Tavily or Firecrawl
+  search for local Chat Completions backends, or mapped natively by a future
+  Responses provider.
 - Translates Anthropic tool blocks to OpenAI-compatible tool messages and
   translates OpenAI tool calls back.
 - Validates returned tool calls against the exact schemas Claude Science
@@ -121,8 +125,16 @@ PROXY_PROFILE=<the same profile you started> ./scripts/doctor.sh
 
 `/healthz` is intentionally safe to share in bug reports. It includes provider
 identity, stream mode, request-kind counters, provider latency summaries, retry
-counts, and tool-filter reason counts, but not prompts, tool arguments, tool
-results, account state, or artifacts.
+counts, tool-filter reason counts, and redacted debug-capture enablement, but
+not prompts, full local paths, tool arguments, tool results, account state, or
+artifacts. For prompt size investigations, enable
+`PROXY_REQUEST_SHAPE_LOG_PATH` to write redacted request-size breakdowns under
+`_local/`, including per-tool description, schema, and full definition JSON
+character counts. The default pass mode preserves active tool definitions
+exactly; prompt reduction should come from changing which tools Claude Science
+offers, not by silently trimming the tools still sent upstream. Keep
+`PROXY_RAW_REQUEST_CAPTURE_DIR` off unless you explicitly need private raw
+request bodies for local debugging.
 
 Expected first-run signals are listed in
 [`docs/verification-checklist.md`](docs/verification-checklist.md).
@@ -192,6 +204,8 @@ For detailed evidence, caveats, and capture notes, see
   the conversion/server code is still being split out incrementally.
 - `profiles/`: provider/backend profiles.
 - `scripts/`: launch, status, smoke-test, and app verification helpers.
+  `scripts/report-prefix-cache.py` summarizes ignored request-shape JSONL logs
+  when `PROXY_REQUEST_SHAPE_LOG_PATH` is enabled.
 - `tests/`: regression tests for streaming, tool filtering, and adapters.
 - `docs/`: start with the [`docs/README.md`](docs/README.md) index for setup,
   architecture, evidence, verification, roadmap, and archived lab notes.

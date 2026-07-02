@@ -67,19 +67,27 @@ Harness tools are configured separately with `PROXY_HARNESS_TOOLS`. This
 matters because `submit_output` is not a user capability such as `bash`,
 `python`, or `web_search`; it is the app's structured reviewer handshake.
 
+Anthropic server-side tools are a separate boundary. Claude Science can offer
+dated server tool entries such as `{type: "web_search_20250305", name:
+"web_search"}` with no client input schema. In the current OpenAI-compatible
+Chat Completions transport, the proxy must not translate those into OpenAI
+function tools, because Claude Science will not execute them as ordinary agent
+tools on the return path. With `PROXY_SERVER_WEB_SEARCH=tavily` or
+`PROXY_SERVER_WEB_SEARCH=firecrawl`, the proxy can instead expose `web_search`
+only to the upstream local model, execute the configured search backend itself
+when the model calls that internal function, feed the results back into a
+bounded upstream tool loop, and return Anthropic `server_tool_use` /
+`web_search_tool_result` blocks to Claude Science. A future native Responses
+provider could map the same boundary to an upstream hosted-search primitive.
+Schema-bearing client tools named `web_search` still pass through if the app
+ever offers one; the proxy-owned server bridge is only for Anthropic hosted
+server-tool definitions.
+
 Reviewer frames may also need inspection tools. In live Qwen runs, forwarding
 only `submit_output` caused the reviewer to narrate or stall, because it wanted
-to inspect saved TSV/Markdown/PNG artifacts. `PROXY_HARNESS_TOOL_ALLOWLIST`
-exists for this observed reviewer request shape; it should not be used to invent
-task categories for foreground Claude Science traffic.
-
-Local models may then over-inspect. `PROXY_HARNESS_FORCE_SUBMIT_AFTER_TOOL_RESULTS`
-is an opt-in closeout guard: after a reviewer/harness conversation has already
-completed a configured number of non-harness tool results and has not submitted
-structured output, the proxy forwards only the harness tool on the next turn.
-This is intentionally configuration-controlled because some models obey
-`tool_choice`, while others need the competing reviewer tools hidden during
-closeout.
+to inspect saved TSV/Markdown/PNG artifacts. The proxy now preserves the
+reviewer tool surface Claude Science offers instead of adding a separate
+forwarding policy.
 
 ## Model Adaptation
 
@@ -108,19 +116,16 @@ Useful profile dimensions:
   persistence.
 - Tool mode: `pass` for tool-capable local models or `drop` when intentionally
   testing a no-tool proxy path. The default MTPLX/Qwen path uses `pass`, so it
-  preserves Claude Science's app-pruned tool inventory.
+  preserves Claude Science's app-pruned tool inventory. In pass mode, active
+  tool definitions are translated losslessly from Anthropic `description` and
+  `input_schema` into OpenAI-compatible `function.description` and
+  `function.parameters`. The proxy does not trim, summarize, or rewrite active
+  tool descriptions by default; context reduction should come from reducing or
+  deferring which tools are active, not mutating the definitions that remain.
 - Harness tools: `PROXY_HARNESS_TOOLS` are structural tools that bypass the
   normal foreground request handling, currently `submit_output` by default. If a
   request forwards exactly one harness tool, the proxy forces a named upstream
   `tool_choice` for that tool so reviewer calls do not devolve into prose.
-- Harness tool allowlist: `PROXY_HARNESS_TOOL_ALLOWLIST` can narrow
-  reviewer/harness requests. Use this only for the observed reviewer/harness
-  shape, not as a foreground task router.
-- Harness closeout: `PROXY_HARNESS_FORCE_SUBMIT_AFTER_TOOL_RESULTS=N` hides
-  reviewer inspection tools and forwards only `submit_output` after `N`
-  completed non-harness reviewer tool results. This is useful for Qwen-style
-  local models that keep inspecting instead of submitting the final structured
-  review.
 - Tool validation: `schema` keeps Claude Science's offered tool schemas as the
   execution boundary. Returned tool calls are emitted only if the name was
   offered, arguments are a JSON object, and the object satisfies the advertised
@@ -174,9 +179,18 @@ response header.
 - Retry and upstream-error counts by HTTP status.
 - Tool-call filter counts by reason, for example `unknown_tool`,
   `schema_invalid`, or `python_sanity`.
+- Redacted optional debug-capture enablement markers, when configured.
 
 It deliberately does not expose prompts, tool arguments, tool results, artifact
-contents, cookies, account state, or local app database paths.
+contents, cookies, account state, full debug-capture paths, or local app
+database paths.
+
+`PROXY_REQUEST_SHAPE_LOG_PATH` enables an ignored JSONL capture for redacted
+request-size breakdowns. It records counts, schema sizes, and per-tool
+definition JSON sizes, not prompt text.
+`PROXY_RAW_REQUEST_CAPTURE_DIR` is a separate opt-in path for raw local request
+captures and should be used only when the person running the lab explicitly
+accepts that those files may contain proprietary app prompts and user data.
 
 ## Main Technical Debt
 

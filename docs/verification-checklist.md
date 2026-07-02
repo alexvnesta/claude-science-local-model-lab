@@ -70,11 +70,10 @@ Expected:
   list, and redacted provider summary.
 - `/healthz` shows the intended `stream_mode`, `tool_mode`,
   `stream_heartbeat_seconds`, `tool_validation`, `tool_repair`,
-  `force_mentioned_tool`, `parse_text_tool_calls`, and optional `schema_log_path`
-  values.
+  `force_mentioned_tool`, `parse_text_tool_calls`, and redacted optional
+  `schema_log_path`, `request_shape_log_path`, and `raw_request_capture_dir`
+  enablement markers. These fields must not expose full local paths.
 - `/healthz` shows `harness_tools`, normally `["submit_output"]`.
-- If the active profile sets them, `/healthz` also shows
-  `harness_tool_allowlist` and `harness_force_submit_after_tool_results`.
 - `/healthz.metrics` shows request counts by kind and stream mode, provider
   latency by kind, retry/error counts, and tool-filter reason counts. It should
   not include prompt text, tool arguments, tool results, account state, or
@@ -84,7 +83,7 @@ Expected:
 - `./scripts/test-streaming-proxy.sh` passes streamed text, direct-stream
   long-output chunking, heartbeat comments, request ID response headers,
   streamed tool-call argument assembly, malformed streamed tool-call filtering,
-  direct-stream reviewer/harness allowlists, full-JSON fallback, in-band stream
+  direct-stream reviewer/harness pass-through, full-JSON fallback, in-band stream
   error events, finite SSE close, client cancellation survival, redacted health
   metrics, and Qwen text-tool-call adapter cases.
 
@@ -241,9 +240,7 @@ Try, in fresh sessions when practical:
   surface, and Claude Science persists `tool_use`, `tool_result`,
   artifact/version state, and a final answer.
 - Reviewer/harness pass: expected proxy logs and `/healthz` classify reviewer
-  traffic as `kind=harness`, with reviewer inspection tools from
-  `PROXY_HARNESS_TOOL_ALLOWLIST` only when that reviewer-specific override is
-  configured.
+  traffic as `kind=harness` while forwarding the tools Claude Science offered.
 - Cancellation: interrupt or close a long direct-stream UI turn. Expected: the
   proxy logs a client disconnect, remains healthy, and `/healthz` still
   responds without exposing prompt or tool data.
@@ -254,12 +251,15 @@ profile's redacted `/healthz`, and whether the isolated app was listening or
 authenticated. Do not publish prompts, tool arguments, tool results, cookies,
 SQLite rows, artifacts, or diagnostic ZIPs.
 
-Direct-mode app-side attempt from 2026-07-01: proxy-level fake-upstream tests
-passed, but live Claude Science app proof was not run because MTPLX
-`127.0.0.1:8030` was not reachable, the isolated app was not listening on
-`127.0.0.1:18765`, and the existing lab proxy on `127.0.0.1:18080` was running
-the buffered Qwen profile. The official app remained separate on
-`127.0.0.1:8765`.
+Direct-mode app-side attempt from 2026-07-01: the isolated Claude Science app on
+`127.0.0.1:18765` resumed a TE-expression frame against MTPLX
+`127.0.0.1:8030` with `PROXY_STREAM_MODE=direct` and 5-second heartbeat
+comments. Four large `tool_agent` requests were observed, three completed
+without upstream errors, and `/healthz` counted them under `stream_mode=direct`.
+Visible UI state remained status-oriented (`Thinking`, `Running a tool`) rather
+than exposing a reasoning trace. Context grew from about 97k to 114k OpenAI
+message-text characters with the same 26 active tools. The final interrupted
+turn logged a client disconnect after the app was stopped.
 
 ## 6. Bounded Analysis Proof
 
@@ -307,19 +307,24 @@ Expected:
   completed `submit_output` tool result is present in the conversation, the
   proxy should log `not forcing completed harness tool_choice 'submit_output'`
   and allow the reviewer follow-up to end normally instead of looping.
-- Reviewer/harness calls may need their own tool set. For Qwen execution
-  probes, `/healthz` should show
-  `harness_tool_allowlist: ["repl","read_file","boundary","summary_query","query_target_history","submit_output"]`.
-  In reviewer logs, `kind=harness` with `upstream_tools=6` means the reviewer
-  can inspect artifacts instead of being forced to submit blindly.
-- For local models that keep inspecting, `/healthz` may show
-  `harness_force_submit_after_tool_results`. When this is nonzero and a
-  reviewer has already completed that many non-harness tool results, the proxy
-  should log `forcing harness closeout 'submit_output'` and forward only the
-  harness submit tool on that turn.
+- Reviewer/harness calls may need their own tool set. In reviewer logs,
+  `kind=harness` with `upstream_tools=6` means the reviewer can inspect
+  artifacts instead of being forced to submit blindly.
 - When `PROXY_SCHEMA_LOG_PATH` is set, `_local/tool-schema-capture.jsonl` should
   receive one redacted inventory per tool-offering request. Keep this file out
   of git and use it to tune provider-specific tool adapters.
+- When `PROXY_REQUEST_SHAPE_LOG_PATH` is set,
+  `_local/request-shape-capture.jsonl` should receive one redacted size
+  breakdown per request: system/message/tool character counts, schema sizes,
+  per-tool full definition JSON sizes, request kind, stream mode, and MTPLX
+  text-character totals. It must not include prompt text, tool arguments, or
+  tool results. In pass mode, the default expected behavior is lossless active
+  tool definition forwarding; any prompt-reduction variant needs separate
+  before/after evidence before it can replace that default.
+- Set `PROXY_RAW_REQUEST_CAPTURE_DIR` only for local debugging. Captured files
+  are written under a private directory with `0600` files, but they can contain
+  Claude Science prompt text, user text, tool arguments, and tool results. Do
+  not share or commit them.
 - Python tool calls should be inline executable code, not filenames or
   generated artifact paths. The proxy filters observed malformed local-model
   shapes such as `code: "openrouter_free_probe.py"` and giant single-line
@@ -387,8 +392,7 @@ Expected:
   readable but Panel B was a component breakdown, not the requested simple
   mechanism schematic; and the reviewer child
   `15ee6b53-3a23-4521-9228-8b06187d5da7` used real `repl`/`read_file`
-  inspection tools but remained slow and loop-prone before the closeout guard
-  was added.
+  inspection tools but remained slow and loop-prone.
 - Local Qwen TP53 workflow proof:
   `0b03da82-efe5-4440-be56-651d7053d1fb` ran against
   `mtplx-qwen36-27b-optimized-quality`. The foreground frame
@@ -412,9 +416,20 @@ disconnect before the proxy returns the completed response.
 
 `PROXY_STREAM_MODE=direct` now has deterministic proxy tests for OpenAI SSE to
 Anthropic SSE conversion, idle heartbeat comments, request ID headers, finite
-close, and buffered validation of streamed upstream tool-call argument deltas.
-It still does not provide a verified app-side persisted tool loop for
-MTPLX/Qwen. It needs more work before it replaces buffered mode. Until then:
+close, buffered validation of streamed upstream tool-call argument deltas, and
+live app-side proof for several MTPLX/Qwen tool-agent turns. It did not expose a
+reasoning trace in Claude Science during the TE-expression probe, and it still
+needs a clean final-answer/reviewer proof before it replaces buffered mode.
+The proxy test suite also covers the tool-boundary regression where Anthropic
+server-side `web_search_20250305` is omitted from OpenAI function forwarding
+by default while schema-bearing client tools named `web_search` still pass
+through. When `PROXY_SERVER_WEB_SEARCH=tavily` or
+`PROXY_SERVER_WEB_SEARCH=firecrawl` is enabled, the suite covers the proxy-owned
+bridge: the upstream model calls an internal `web_search` function, the proxy
+executes the configured search backend, and Claude Science receives Anthropic
+`server_tool_use` / `web_search_tool_result` blocks with
+`usage.server_tool_use.web_search_requests`.
+Until then:
 
 - Keep execution probes short and focused.
 - Disable verifier for long foreground experiments when isolating main-agent
@@ -427,8 +442,20 @@ MTPLX/Qwen. It needs more work before it replaces buffered mode. Until then:
 - Treat successful direct proxy calls as formatting evidence only unless the
   isolated app database shows persisted `frame_messages`, `execution_log`, and
   artifact rows.
-- Treat heartbeat success as transport liveness evidence, not as proof that
-  Qwen can complete long app-side execution/reviewer workflows in direct mode.
+- Treat heartbeat/ping success as transport liveness evidence, not as proof
+  that Qwen can complete long app-side execution/reviewer workflows in direct
+  mode. The proxy now emits both debug SSE comments (`: heartbeat`) and
+  Anthropic-compatible `event: ping` keepalives during idle waits. Generic direct
+  streams should not synthesize an empty `message_start`. The proxy-owned
+  server-web-search loop is narrower: it sends one immediate `message_start`
+  before the background search/tool loop to satisfy Claude Science's first-token
+  watchdog, then emits heartbeat/ping events until content blocks are ready.
+  Keep that behavior confined to proxy-owned server-tool loops and re-check it
+  with an app-side smoke whenever the streaming contract changes.
+- Identical retried proxy-owned tool-loop requests should join an in-flight job
+  or briefly replay the completed result after a disconnect. This is a
+  transport-level retry repair, not a model-specific cache; normal completed
+  requests are not globally cached for unrelated future prompts.
 
 ## 7. Record Evidence
 

@@ -82,19 +82,40 @@ Observed Qwen behavior:
   `mcp_skills = search_skills(...)`, or unavailable host/kernel APIs such as
   `import kernel` and `host.skills.list()`. The proxy filters those shapes before
   local execution.
-- Use `PROXY_HARNESS_TOOL_ALLOWLIST` only when reviewer requests need a
-  different inspection surface than foreground requests.
-- Reviewer frames may over-inspect instead of calling `submit_output`. The
-  optional `PROXY_HARNESS_FORCE_SUBMIT_AFTER_TOOL_RESULTS` closeout guard can
-  hide reviewer inspection tools after repeated non-harness tool results.
+- Reviewer frames may need inspection tools as well as `submit_output`; the
+  proxy forwards the reviewer tool surface Claude Science offers.
 - Local model loops are slow. The refined Qwen artifact run took multiple
   model turns for TSV, figure, Markdown, artifact save, final answer, and
   reviewer inspection. Treat this as a capability proof, not yet an ergonomic
   production default.
 - The MTPLX/Qwen profile still defaults to `PROXY_STREAM_MODE=buffered` because
   that is the known-good app path for short tool loops. Direct mode now has
-  proxy-level heartbeat coverage, but it still needs fresh Claude Science
-  app-side proof before becoming the default for Qwen execution workflows.
+  proxy-level heartbeat coverage and live Claude Science proof for several
+  large tool-agent turns, but it did not surface a reasoning trace and still
+  needs a clean final-answer/reviewer proof before becoming the default for Qwen
+  execution workflows.
+- For large foreground-prompt investigations, set
+  `PROXY_REQUEST_SHAPE_LOG_PATH=_local/request-shape-capture.jsonl` to capture
+  redacted request-size breakdowns, including per-tool description, schema, and
+  full definition JSON character counts. Normal provider profiles should pass
+  active tool descriptions losslessly. Any provider-specific prompt-reduction
+  variant should stay out of the default path until a before/after harness run
+  proves it is needed and behaviorally equivalent. Use
+  `PROXY_RAW_REQUEST_CAPTURE_DIR` only for private local debugging because raw
+  captures can include prompt text and tool payloads.
+- Dated Anthropic server-side tools such as `web_search_20250305` are omitted
+  from generic OpenAI Chat Completions function-tool forwarding unless
+  `PROXY_SERVER_WEB_SEARCH=tavily` or `PROXY_SERVER_WEB_SEARCH=firecrawl` is
+  enabled. Keep Tavily/Firecrawl keys in the process environment or ignored
+  `_local/proxy.env`; the proxy CLI does not accept key arguments. With that
+  opt-in bridge, the proxy exposes an internal `web_search` function to the
+  upstream model, calls the configured search backend itself, feeds the search
+  result back into the upstream tool loop, and returns Anthropic
+  `server_tool_use` / `web_search_tool_result` blocks to Claude Science.
+  Without that bridge, forwarding server tools as ordinary functions causes the
+  app to reject the returned call as `Tool 'web_search' not found on agent
+  'OPERON'`. Firecrawl's hosted free tier is credit-based; search consumes
+  credits per result batch.
 - Set `PROXY_STRIP_THINKING_TEXT=1` only when you intentionally want to hide
   leading Qwen-style `<think>...</think>` blocks in a UI demo.
 

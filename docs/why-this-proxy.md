@@ -41,9 +41,9 @@ flowchart LR
 ```
 
 The important part is the middle box. The proxy is not just swapping URLs. It
-classifies the request shape, exposes the right tool surface, validates returned
-tool calls, and converts responses back into the Anthropic Messages shape that
-Claude Science expects.
+classifies the request shape, forwards the offered tool surface, validates
+returned tool calls, and converts responses back into the Anthropic Messages
+shape that Claude Science expects.
 
 ## What The Proxy Adds
 
@@ -51,7 +51,7 @@ Claude Science expects.
 | --- | --- |
 | App isolation | Runs a copied Claude Science app against `_local/` data so the official app and account state stay untouched. |
 | Request-shape routing | Separates `plain`, `tools_hidden`, `tool_agent`, and `harness` traffic instead of treating every request like one chat loop. |
-| Reviewer safety | Handles reviewer tools such as `submit_output` separately from foreground tools such as `python` and `save_artifacts`. |
+| Harness awareness | Recognizes structural reviewer tools such as `submit_output` for logging and single-tool `tool_choice`, while otherwise preserving Claude Science's offered tools. |
 | Tool correctness | Validates returned tool calls against the exact schemas Claude Science offered on that request before emitting executable `tool_use`. |
 | Local-model adaptation | Repairs narrow observed Qwen/reviewer pseudo-tool-call text formats and filters malformed execution calls. |
 | Provider portability | Supports MTPLX/Qwen, Ollama, OpenRouter, and generic OpenAI-compatible backends through profiles. |
@@ -69,8 +69,8 @@ Anthropic message -> OpenAI chat completion -> Anthropic message
 
 Claude Science needs more care because reviewer and tool calls are part of the
 product workflow. A failed reviewer `submit_output`, a hidden-tool call treated
-as a foreground agent, or a local model hallucinating a Python/artifact call can
-break the scientific session even if ordinary chat still works.
+as a normal tool-agent turn, or a local model hallucinating a Python/artifact
+call can break the scientific session even if ordinary chat still works.
 
 This repo therefore treats Claude Science request kind as the core abstraction.
 Provider selection, stream mode, tool adapters, and model-specific repairs hang

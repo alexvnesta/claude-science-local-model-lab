@@ -9,8 +9,8 @@ the fragile parts: streaming conversion, long direct text streams,
 direct-stream idle heartbeats, streamed tool-call argument assembly, malformed
 streamed tool-call filtering, in-band stream error events, finite SSE close,
 client disconnect survival, request ID response headers, tool-call filtering,
-schema validation, Qwen-style reviewer tool-call text, reviewer-specific tool
-handling, Python smuggling guards, harness closeout forcing, and redacted
+schema validation, Qwen-style reviewer tool-call text, harness request
+classification, Python smuggling guards, and redacted
 health metrics.
 
 It is not yet a polished production gateway. The main risks are long-running
@@ -29,7 +29,7 @@ tool turns, and needs reviewer-loop guardrails.
    Proxy-level hardening now covers direct OpenAI SSE to Anthropic SSE
    conversion, long multi-chunk text, idle heartbeat comments, split streamed
    tool-call arguments, malformed or incomplete streamed tool arguments,
-   schema-valid tool emission, reviewer/harness direct-stream allowlists,
+   schema-valid tool emission, reviewer/harness direct-stream pass-through,
    request-ID headers, finite close, in-band upstream stream errors, and a
    socket-level client cancellation regression. Tool arguments are still
    accumulated and emitted only after final schema validation; the app never
@@ -59,15 +59,28 @@ tool turns, and needs reviewer-loop guardrails.
    defaults, and optional live-provider smoke coverage for additional
    OpenAI-compatible services.
 
-4. Keep request-shape routing separate from provider transport.
+4. Finish the typed server-tool capability layer.
+
+   Prior art from `raine/claude-code-proxy` shows the right native bridge for
+   OpenAI Responses: translate Anthropic hosted `web_search_20250305` into a
+   native Responses `web_search` tool, then translate upstream `web_search_call`
+   events back into Anthropic `server_tool_use` and `web_search_tool_result`
+   blocks with usage accounting. For generic Chat Completions backends such as
+   MTPLX, the proxy now supports proxy-owned Tavily and Firecrawl bridges for
+   hosted `web_search` when `PROXY_SERVER_WEB_SEARCH=tavily` or
+   `PROXY_SERVER_WEB_SEARCH=firecrawl` is enabled; otherwise it omits
+   unsupported server tools instead of exposing fake functions. Remaining work:
+   add a native Responses provider and decide whether proxy-owned `web_fetch`
+   belongs in this lab.
+
+5. Keep request-shape routing separate from provider transport.
 
    Claude Science request kinds (`plain`, `tools_hidden`, `tool_agent`,
    `harness`) should remain the broker's core abstraction. Provider selection,
    stream mode, and tool adapter choices should hang off that classification
-   rather than being mixed into app launch scripts. Keep reviewer tool handling
-   and reviewer closeout policy separate from foreground request handling.
+   rather than being mixed into app launch scripts.
 
-5. Improve observability without leaking data.
+6. Improve observability without leaking data.
 
    Initial version done: `/v1/messages` responses include `X-Request-Id`, logs
    carry that ID, and `/healthz` exposes counters by request kind/stream mode,
@@ -75,23 +88,23 @@ tool turns, and needs reviewer-loop guardrails.
    reasons. Keep prompts, tool arguments, tool results, account state, and
    artifacts out of public logs.
 
-6. Package the project.
+7. Package the project.
 
    Add `pyproject.toml`, an installable console entrypoint, and a typed config
    file format while preserving the simple shell profile path for quick tests.
 
-7. Separate evidence logs from quick-start docs.
+8. Separate evidence logs from quick-start docs.
 
    The README should stay cloneable and short. Long frame IDs, app-path proof,
    and version archaeology should live in evidence docs or release notes.
 
-8. Broaden provider smoke tests beyond Ollama and OpenRouter.
+9. Broaden provider smoke tests beyond Ollama and OpenRouter.
 
    Keep CI deterministic by defaulting to fake upstreams, but add optional live
    smoke paths for vLLM, LM Studio, llama.cpp server, and other providers when
    their local endpoints or API keys are present.
 
-9. Add artifact-aware final-response guards.
+10. Add artifact-aware final-response guards.
 
    OpenRouter/Gemma produced valid saved artifacts but also hallucinated a
    nonexistent `{{artifact:...}}` version reference in final prose. The reviewer
@@ -101,22 +114,21 @@ tool turns, and needs reviewer-loop guardrails.
    direct streaming than in buffered mode because text deltas are emitted before
    the full final answer is available.
 
-10. Provide figure templates for weaker/local models.
+11. Provide figure templates for weaker/local models.
 
     Free and local models can execute Python but often make cramped figures.
     Add reusable plotting helpers or prompt snippets for ranked bar charts,
     pathway schematics, and BioRender-style layouts so model variability affects
     content more than layout mechanics.
 
-11. Add reviewer budget and stop-policy controls.
+12. Investigate reviewer budget and stop-policy controls.
 
     The Qwen refined run showed reviewer quality improved when `repl` and
     `read_file` were visible, but the reviewer then over-inspected and delayed
-    `submit_output`. The current closeout threshold is a profile-level guard.
-    A better version would be request-kind-aware and evidence-aware: inspect
-    TSV/Markdown/figure once, then force submit or summarize remaining risk.
+    `submit_output`. Treat that as a model-behavior issue unless a new app-level
+    contract proves the proxy should intervene.
 
-12. Add local process durability checks.
+13. Add local process durability checks.
 
     Long Qwen/reviewer loops can leave the isolated app or upstream model
     server unavailable. Add a post-run health monitor that reports whether

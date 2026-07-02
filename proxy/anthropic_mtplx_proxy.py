@@ -66,6 +66,7 @@ DEFAULT_UPSTREAM_MODEL = _env_first(
     ("UPSTREAM_OPENAI_MODEL", "MTPLX_OPENAI_MODEL"),
     "mtplx-qwen36-27b-optimized-quality",
 )
+DEFAULT_UPSTREAM_API_KEY = _env_first(("UPSTREAM_API_KEY", "MTPLX_API_KEY"), "local-mtplx")
 
 
 def infer_provider_name(upstream_base: str) -> str:
@@ -93,12 +94,17 @@ DEFAULT_FORCE_MENTIONED_TOOL = _env("PROXY_FORCE_MENTIONED_TOOL", "0")
 DEFAULT_PARSE_TEXT_TOOL_CALLS = _env("PROXY_PARSE_TEXT_TOOL_CALLS", "0")
 DEFAULT_STRIP_THINKING_TEXT = _env("PROXY_STRIP_THINKING_TEXT", "0")
 DEFAULT_SCHEMA_LOG_PATH = _env("PROXY_SCHEMA_LOG_PATH", "")
+DEFAULT_REQUEST_SHAPE_LOG_PATH = _env("PROXY_REQUEST_SHAPE_LOG_PATH", "")
+DEFAULT_RAW_REQUEST_CAPTURE_DIR = _env("PROXY_RAW_REQUEST_CAPTURE_DIR", "")
 DEFAULT_HARNESS_TOOLS = _env("PROXY_HARNESS_TOOLS", "submit_output")
-DEFAULT_HARNESS_TOOL_ALLOWLIST = _env("PROXY_HARNESS_TOOL_ALLOWLIST", "")
-DEFAULT_HARNESS_FORCE_SUBMIT_AFTER_TOOL_RESULTS = int(
-    _env("PROXY_HARNESS_FORCE_SUBMIT_AFTER_TOOL_RESULTS", "0")
-)
 DEFAULT_CLAUDE_SCIENCE_COMPAT = _env("PROXY_CLAUDE_SCIENCE_COMPAT", "0")
+DEFAULT_SERVER_WEB_SEARCH = _env("PROXY_SERVER_WEB_SEARCH", "off")
+DEFAULT_SERVER_WEB_SEARCH_MAX_RESULTS = int(_env("PROXY_SERVER_WEB_SEARCH_MAX_RESULTS", "5"))
+DEFAULT_SERVER_WEB_SEARCH_MAX_USES = int(_env("PROXY_SERVER_WEB_SEARCH_MAX_USES", "3"))
+DEFAULT_TAVILY_API_KEY = _env("TAVILY_API_KEY", "")
+DEFAULT_TAVILY_BASE_URL = _env("TAVILY_BASE_URL", "https://api.tavily.com")
+DEFAULT_FIRECRAWL_API_KEY = _env("FIRECRAWL_API_KEY", "")
+DEFAULT_FIRECRAWL_BASE_URL = _env("FIRECRAWL_BASE_URL", "https://api.firecrawl.dev")
 DEFAULT_MTPLX_AVOID_BACKGROUND_BYPASS = _env("PROXY_MTPLX_AVOID_BACKGROUND_BYPASS", "0")
 DEFAULT_MTPLX_BACKGROUND_MAX_TOKENS = int(_env("PROXY_MTPLX_BACKGROUND_MAX_TOKENS", "48"))
 DEFAULT_MTPLX_BACKGROUND_NO_HISTORY_MAX_CHARS = int(
@@ -117,6 +123,25 @@ DEFAULT_UPSTREAM_APP_TITLE = _env_first(
     ("UPSTREAM_APP_TITLE", "OPENROUTER_APP_TITLE"),
     "",
 )
+ANTHROPIC_SERVER_TOOL_TYPE_PREFIXES = ("web_search_", "web_fetch_")
+PROXY_WEB_SEARCH_TOOL_NAME = "web_search"
+PROXY_WEB_SEARCH_TOOL_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "query": {
+            "type": "string",
+            "description": "Focused web search query.",
+        },
+    },
+    "required": ["query"],
+    "additionalProperties": False,
+}
+PROXY_WEB_SEARCH_TOOL_DESCRIPTION = (
+    "Search the public web for current or external information. Use a concise "
+    "query and cite source URLs from the returned results."
+)
+SERVER_TOOL_LOOP_REPLAY_TTL_SECONDS = 120.0
+SERVER_TOOL_LOOP_ACTIVE_TTL_SECONDS = 900.0
 
 
 class ProxyConfig:
@@ -124,6 +149,7 @@ class ProxyConfig:
         self,
         upstream_base: str,
         upstream_model: str,
+        upstream_api_key: str,
         provider_name: str,
         timeout: float,
         max_tokens_cap: int,
@@ -138,10 +164,17 @@ class ProxyConfig:
         parse_text_tool_calls: bool,
         strip_thinking_text: bool,
         schema_log_path: str,
+        request_shape_log_path: str,
+        raw_request_capture_dir: str,
         harness_tools: list[str],
-        harness_tool_allowlist: list[str],
-        harness_force_submit_after_tool_results: int,
         claude_science_compat: bool,
+        server_web_search: str,
+        server_web_search_max_results: int,
+        server_web_search_max_uses: int,
+        tavily_api_key: str,
+        tavily_base_url: str,
+        firecrawl_api_key: str,
+        firecrawl_base_url: str,
         mtplx_avoid_background_bypass: bool,
         mtplx_background_max_tokens: int,
         mtplx_background_no_history_max_chars: int,
@@ -150,6 +183,7 @@ class ProxyConfig:
     ) -> None:
         self.upstream_base = upstream_base.rstrip("/")
         self.upstream_model = upstream_model
+        self.upstream_api_key = upstream_api_key
         self.provider_name = provider_name
         self.timeout = timeout
         self.max_tokens_cap = max_tokens_cap
@@ -164,10 +198,17 @@ class ProxyConfig:
         self.parse_text_tool_calls = parse_text_tool_calls
         self.strip_thinking_text = strip_thinking_text
         self.schema_log_path = schema_log_path
+        self.request_shape_log_path = request_shape_log_path
+        self.raw_request_capture_dir = raw_request_capture_dir
         self.harness_tools = harness_tools
-        self.harness_tool_allowlist = harness_tool_allowlist
-        self.harness_force_submit_after_tool_results = harness_force_submit_after_tool_results
         self.claude_science_compat = claude_science_compat
+        self.server_web_search = server_web_search
+        self.server_web_search_max_results = server_web_search_max_results
+        self.server_web_search_max_uses = server_web_search_max_uses
+        self.tavily_api_key = tavily_api_key
+        self.tavily_base_url = tavily_base_url.rstrip("/")
+        self.firecrawl_api_key = firecrawl_api_key
+        self.firecrawl_base_url = firecrawl_base_url.rstrip("/")
         self.mtplx_avoid_background_bypass = mtplx_avoid_background_bypass
         self.mtplx_background_max_tokens = mtplx_background_max_tokens
         self.mtplx_background_no_history_max_chars = mtplx_background_no_history_max_chars
@@ -178,6 +219,7 @@ class ProxyConfig:
 CONFIG = ProxyConfig(
     DEFAULT_UPSTREAM_BASE,
     DEFAULT_UPSTREAM_MODEL,
+    DEFAULT_UPSTREAM_API_KEY,
     DEFAULT_PROVIDER_NAME,
     DEFAULT_TIMEOUT,
     DEFAULT_MAX_TOKENS_CAP,
@@ -192,10 +234,17 @@ CONFIG = ProxyConfig(
     False,
     False,
     "",
+    "",
+    "",
     [],
-    [],
-    0,
     False,
+    "off",
+    5,
+    3,
+    "",
+    "https://api.tavily.com",
+    "",
+    "https://api.firecrawl.dev",
     False,
     48,
     4096,
@@ -213,6 +262,13 @@ def parse_csv(value: str) -> list[str]:
             seen.add(item)
             items.append(item)
     return items
+
+
+def redacted_path_setting(path: str) -> str:
+    if not path:
+        return ""
+    basename = os.path.basename(path.rstrip(os.sep)) or "configured"
+    return f"<enabled:{basename}>"
 
 
 def parse_model_display_names(value: str) -> dict[str, str]:
@@ -270,6 +326,13 @@ def parse_tool_repair(value: str) -> str:
     return mode
 
 
+def parse_server_web_search(value: str) -> str:
+    mode = value.strip().lower()
+    if mode not in ("off", "tavily", "firecrawl"):
+        raise ValueError("server web search must be 'off', 'tavily', or 'firecrawl'")
+    return mode
+
+
 def parse_bool(value: str) -> bool:
     lowered = value.strip().lower()
     if lowered in ("1", "true", "yes", "on"):
@@ -286,10 +349,17 @@ CONFIG.force_mentioned_tool = parse_bool(DEFAULT_FORCE_MENTIONED_TOOL)
 CONFIG.parse_text_tool_calls = parse_bool(DEFAULT_PARSE_TEXT_TOOL_CALLS)
 CONFIG.strip_thinking_text = parse_bool(DEFAULT_STRIP_THINKING_TEXT)
 CONFIG.schema_log_path = DEFAULT_SCHEMA_LOG_PATH
+CONFIG.request_shape_log_path = DEFAULT_REQUEST_SHAPE_LOG_PATH
+CONFIG.raw_request_capture_dir = DEFAULT_RAW_REQUEST_CAPTURE_DIR
 CONFIG.harness_tools = parse_csv(DEFAULT_HARNESS_TOOLS)
-CONFIG.harness_tool_allowlist = parse_csv(DEFAULT_HARNESS_TOOL_ALLOWLIST)
-CONFIG.harness_force_submit_after_tool_results = DEFAULT_HARNESS_FORCE_SUBMIT_AFTER_TOOL_RESULTS
 CONFIG.claude_science_compat = parse_bool(DEFAULT_CLAUDE_SCIENCE_COMPAT)
+CONFIG.server_web_search = parse_server_web_search(DEFAULT_SERVER_WEB_SEARCH)
+CONFIG.server_web_search_max_results = max(1, DEFAULT_SERVER_WEB_SEARCH_MAX_RESULTS)
+CONFIG.server_web_search_max_uses = max(1, DEFAULT_SERVER_WEB_SEARCH_MAX_USES)
+CONFIG.tavily_api_key = DEFAULT_TAVILY_API_KEY
+CONFIG.tavily_base_url = DEFAULT_TAVILY_BASE_URL.rstrip("/")
+CONFIG.firecrawl_api_key = DEFAULT_FIRECRAWL_API_KEY
+CONFIG.firecrawl_base_url = DEFAULT_FIRECRAWL_BASE_URL.rstrip("/")
 CONFIG.mtplx_avoid_background_bypass = parse_bool(DEFAULT_MTPLX_AVOID_BACKGROUND_BYPASS)
 CONFIG.mtplx_background_max_tokens = DEFAULT_MTPLX_BACKGROUND_MAX_TOKENS
 CONFIG.mtplx_background_no_history_max_chars = DEFAULT_MTPLX_BACKGROUND_NO_HISTORY_MAX_CHARS
@@ -444,34 +514,6 @@ def completed_harness_tool_names(payload: dict[str, Any]) -> set[str]:
     return completed_names
 
 
-def completed_non_harness_tool_result_count(payload: dict[str, Any]) -> int:
-    tool_use_names_by_id: dict[str, str] = {}
-    completed_count = 0
-    harness_tools = set(CONFIG.harness_tools)
-
-    for message in payload.get("messages") or []:
-        if not isinstance(message, dict):
-            continue
-        role = message.get("role")
-        content = message.get("content")
-        if role == "assistant" and isinstance(content, list):
-            for block in content:
-                if not isinstance(block, dict) or block.get("type") != "tool_use":
-                    continue
-                name = block.get("name")
-                tool_id = block.get("id")
-                if isinstance(name, str) and isinstance(tool_id, str):
-                    tool_use_names_by_id[tool_id] = name
-        elif role == "user":
-            for block in tool_result_blocks(message):
-                tool_id = block.get("tool_use_id") or block.get("id")
-                name = tool_use_names_by_id.get(tool_id) if isinstance(tool_id, str) else None
-                if isinstance(name, str) and name not in harness_tools:
-                    completed_count += 1
-
-    return completed_count
-
-
 def openai_message_roles(request: dict[str, Any]) -> list[str]:
     roles: list[str] = []
     for message in request.get("messages") or []:
@@ -568,7 +610,6 @@ def assistant_message_from_blocks(message: dict[str, Any]) -> dict[str, Any]:
 def anthropic_to_openai(payload: dict[str, Any], stream: bool = False) -> dict[str, Any]:
     messages: list[dict[str, Any]] = []
     payload_tool_names = tool_names(payload)
-    allowlist = effective_tool_allowlist(payload)
 
     system = payload.get("system")
     system_text = block_text(system)
@@ -617,9 +658,9 @@ def anthropic_to_openai(payload: dict[str, Any], stream: bool = False) -> dict[s
     for tool in payload.get("tools") or []:
         if not isinstance(tool, dict):
             continue
-        name = tool.get("name")
-        if allowlist is not None and name not in allowlist:
+        if is_anthropic_server_tool(tool):
             continue
+        name = tool.get("name")
         tools.append(
             {
                 "type": "function",
@@ -630,6 +671,8 @@ def anthropic_to_openai(payload: dict[str, Any], stream: bool = False) -> dict[s
                 },
             }
         )
+    if CONFIG.tool_mode == "pass" and anthropic_web_search_spec(payload):
+        tools.append(proxy_web_search_openai_tool())
 
     requested_max_tokens = int(payload.get("max_tokens") or 1024)
     max_tokens = min(requested_max_tokens, CONFIG.max_tokens_cap)
@@ -648,22 +691,23 @@ def anthropic_to_openai(payload: dict[str, Any], stream: bool = False) -> dict[s
         request["tools"] = tools
 
     tool_choice = payload.get("tool_choice")
+    forwarded_names = [
+        tool["function"]["name"]
+        for tool in tools
+        if isinstance(tool.get("function"), dict)
+        and isinstance(tool["function"].get("name"), str)
+    ]
     forced_tool = forced_mentioned_tool(
         payload,
-        [
-            tool["function"]["name"]
-            for tool in tools
-            if isinstance(tool.get("function"), dict)
-            and isinstance(tool["function"].get("name"), str)
-        ],
+        forwarded_names,
     )
-    if isinstance(tool_choice, dict) and CONFIG.tool_mode == "pass":
+    if isinstance(tool_choice, dict) and CONFIG.tool_mode == "pass" and forwarded_names:
         choice_type = tool_choice.get("type")
         if choice_type == "auto":
             request["tool_choice"] = "auto"
         elif choice_type == "any":
             request["tool_choice"] = "required"
-        elif choice_type == "tool" and tool_choice.get("name"):
+        elif choice_type == "tool" and tool_choice.get("name") in forwarded_names:
             request["tool_choice"] = {
                 "type": "function",
                 "function": {"name": tool_choice["name"]},
@@ -674,42 +718,7 @@ def anthropic_to_openai(payload: dict[str, Any], stream: bool = False) -> dict[s
             "function": {"name": forced_tool},
         }
 
-    forwarded_names = [
-        tool["function"]["name"]
-        for tool in tools
-        if isinstance(tool.get("function"), dict)
-        and isinstance(tool["function"].get("name"), str)
-    ]
     harness_tools = set(CONFIG.harness_tools)
-    closeout_harness_name = None
-    if CONFIG.harness_force_submit_after_tool_results > 0:
-        completed_harness = completed_harness_tool_names(payload)
-        completed_non_harness = completed_non_harness_tool_result_count(payload)
-        for name in forwarded_names:
-            if (
-                name in harness_tools
-                and name not in completed_harness
-                and completed_non_harness >= CONFIG.harness_force_submit_after_tool_results
-            ):
-                closeout_harness_name = name
-                break
-    if closeout_harness_name:
-        tools = [
-            tool
-            for tool in tools
-            if tool.get("function", {}).get("name") == closeout_harness_name
-        ]
-        request["tools"] = tools
-        forwarded_names = [closeout_harness_name]
-        request["tool_choice"] = {
-            "type": "function",
-            "function": {"name": closeout_harness_name},
-        }
-        log(
-            "forcing harness closeout "
-            f"{closeout_harness_name!r} after "
-            f"{completed_non_harness_tool_result_count(payload)} non-harness tool results"
-        )
     if (
         CONFIG.tool_mode == "pass"
         and len(forwarded_names) == 1
@@ -774,16 +783,348 @@ def tool_names(payload: dict[str, Any]) -> list[str]:
     return names
 
 
-def effective_tool_allowlist(payload: dict[str, Any]) -> set[str] | None:
-    harness_tools = set(CONFIG.harness_tools)
-    offered_names = set(tool_names(payload))
-    if offered_names & harness_tools and CONFIG.harness_tool_allowlist:
-        harness_allowlist = set(CONFIG.harness_tool_allowlist)
-        if "*" in harness_allowlist:
-            return None
-        return harness_allowlist | harness_tools
+def is_anthropic_server_tool(tool: dict[str, Any]) -> bool:
+    tool_type = tool.get("type")
+    return isinstance(tool_type, str) and tool_type.startswith(
+        ANTHROPIC_SERVER_TOOL_TYPE_PREFIXES
+    )
 
+
+def is_anthropic_web_search_tool(tool: dict[str, Any]) -> bool:
+    tool_type = tool.get("type")
+    return (
+        isinstance(tool_type, str)
+        and tool_type.startswith("web_search_")
+        and tool.get("name") == PROXY_WEB_SEARCH_TOOL_NAME
+    )
+
+
+def has_schema_bearing_tool_named(payload: dict[str, Any], name: str) -> bool:
+    tools = payload.get("tools")
+    if not isinstance(tools, list):
+        return False
+    for tool in tools:
+        if (
+            isinstance(tool, dict)
+            and tool.get("name") == name
+            and not is_anthropic_server_tool(tool)
+        ):
+            return True
+    return False
+
+
+def clean_domain_list(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    domains: list[str] = []
+    seen: set[str] = set()
+    for item in value:
+        if not isinstance(item, str):
+            continue
+        domain = item.strip().removeprefix("https://").removeprefix("http://").strip("/")
+        if domain and domain not in seen:
+            seen.add(domain)
+            domains.append(domain)
+    return domains
+
+
+def anthropic_web_search_spec(payload: dict[str, Any]) -> dict[str, Any] | None:
+    if CONFIG.server_web_search == "off":
+        return None
+    if CONFIG.server_web_search == "tavily" and not CONFIG.tavily_api_key:
+        return None
+    if CONFIG.server_web_search == "firecrawl" and not CONFIG.firecrawl_api_key:
+        return None
+    tools = payload.get("tools")
+    if not isinstance(tools, list):
+        return None
+    for tool in tools:
+        if not isinstance(tool, dict) or not is_anthropic_web_search_tool(tool):
+            continue
+        if has_schema_bearing_tool_named(payload, PROXY_WEB_SEARCH_TOOL_NAME):
+            return None
+        max_uses = tool.get("max_uses")
+        if not isinstance(max_uses, int) or max_uses < 1:
+            max_uses = CONFIG.server_web_search_max_uses
+        allowed_domains = clean_domain_list(tool.get("allowed_domains"))
+        blocked_domains = (
+            [] if allowed_domains else clean_domain_list(tool.get("blocked_domains"))
+        )
+        return {
+            "type": tool.get("type"),
+            "name": PROXY_WEB_SEARCH_TOOL_NAME,
+            "max_uses": max(1, min(max_uses, CONFIG.server_web_search_max_uses)),
+            "allowed_domains": allowed_domains,
+            "blocked_domains": blocked_domains,
+            "user_location": tool.get("user_location")
+            if isinstance(tool.get("user_location"), dict)
+            else None,
+        }
     return None
+
+
+def proxy_web_search_openai_tool() -> dict[str, Any]:
+    return {
+        "type": "function",
+        "function": {
+            "name": PROXY_WEB_SEARCH_TOOL_NAME,
+            "description": PROXY_WEB_SEARCH_TOOL_DESCRIPTION,
+            "parameters": PROXY_WEB_SEARCH_TOOL_SCHEMA,
+        },
+    }
+
+
+def has_proxy_web_search_tool(request: dict[str, Any]) -> bool:
+    for tool in request.get("tools") or []:
+        if not isinstance(tool, dict):
+            continue
+        function = tool.get("function")
+        if isinstance(function, dict) and function.get("name") == PROXY_WEB_SEARCH_TOOL_NAME:
+            return True
+    return False
+
+
+def server_tool_use_id_from_openai_call_id(call_id: str) -> str:
+    suffix = "".join(
+        char if char.isalnum() or char == "_" else "_"
+        for char in (call_id or uuid.uuid4().hex)
+    )
+    return f"srvtoolu_{suffix}"
+
+
+def tavily_search(
+    query: str,
+    spec: dict[str, Any],
+    *,
+    request_id: str | None = None,
+) -> dict[str, Any]:
+    query = query.strip()
+    if not query:
+        return {
+            "query": query,
+            "error_code": "invalid_input",
+            "counted": False,
+            "results": [],
+            "model_results": [],
+        }
+    body: dict[str, Any] = {
+        "query": query[:400],
+        "search_depth": "basic",
+        "max_results": CONFIG.server_web_search_max_results,
+        "include_answer": False,
+        "include_raw_content": False,
+    }
+    allowed = spec.get("allowed_domains") or []
+    blocked = spec.get("blocked_domains") or []
+    if allowed:
+        body["include_domains"] = allowed
+    if blocked:
+        body["exclude_domains"] = blocked
+
+    raw_body = json.dumps(body).encode("utf-8")
+    request = urllib.request.Request(
+        f"{CONFIG.tavily_base_url}/search",
+        data=raw_body,
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {CONFIG.tavily_api_key}",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=min(CONFIG.timeout, 60.0)) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        code = "too_many_requests" if exc.code == 429 else "unavailable"
+        log(f"Tavily search HTTP {exc.code}; returning {code}", request_id=request_id)
+        return {
+            "query": query,
+            "error_code": code,
+            "counted": False,
+            "results": [],
+            "model_results": [],
+        }
+    except Exception as exc:  # noqa: BLE001 - surfaced as server-tool error block.
+        log(f"Tavily search failed: {exc}", request_id=request_id)
+        return {
+            "query": query,
+            "error_code": "unavailable",
+            "counted": False,
+            "results": [],
+            "model_results": [],
+        }
+
+    results: list[dict[str, Any]] = []
+    model_results: list[dict[str, Any]] = []
+    for item in payload.get("results") or []:
+        if not isinstance(item, dict):
+            continue
+        url = str(item.get("url") or "").strip()
+        if not url:
+            continue
+        title = str(item.get("title") or url).strip()
+        content = str(item.get("content") or "").strip()
+        page_age = item.get("published_date") or item.get("page_age")
+        result_block: dict[str, Any] = {
+            "type": "web_search_result",
+            "url": url,
+            "title": title,
+        }
+        if isinstance(page_age, str) and page_age:
+            result_block["page_age"] = page_age
+        results.append(result_block)
+        model_result = {
+            "title": title,
+            "url": url,
+            "content": content[:1200],
+        }
+        score = item.get("score")
+        if isinstance(score, (int, float)):
+            model_result["score"] = score
+        model_results.append(model_result)
+
+    log(f"Tavily search returned {len(results)} results", request_id=request_id)
+    return {
+        "query": query,
+        "error_code": None,
+        "counted": True,
+        "results": results,
+        "model_results": model_results,
+    }
+
+
+def firecrawl_search(
+    query: str,
+    spec: dict[str, Any],
+    *,
+    request_id: str | None = None,
+) -> dict[str, Any]:
+    query = query.strip()
+    if not query:
+        return {
+            "query": query,
+            "error_code": "invalid_input",
+            "counted": False,
+            "results": [],
+            "model_results": [],
+        }
+    body: dict[str, Any] = {
+        "query": query[:500],
+        "limit": CONFIG.server_web_search_max_results,
+        "sources": ["web"],
+        "timeout": int(min(CONFIG.timeout, 60.0) * 1000),
+        "ignoreInvalidURLs": True,
+    }
+    allowed = spec.get("allowed_domains") or []
+    blocked = spec.get("blocked_domains") or []
+    if allowed:
+        body["includeDomains"] = allowed
+    elif blocked:
+        body["excludeDomains"] = blocked
+
+    raw_body = json.dumps(body).encode("utf-8")
+    request = urllib.request.Request(
+        f"{CONFIG.firecrawl_base_url}/v2/search",
+        data=raw_body,
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {CONFIG.firecrawl_api_key}",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=min(CONFIG.timeout, 65.0)) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        code = "too_many_requests" if exc.code == 429 else "unavailable"
+        log(f"Firecrawl search HTTP {exc.code}; returning {code}", request_id=request_id)
+        return {
+            "query": query,
+            "error_code": code,
+            "counted": False,
+            "results": [],
+            "model_results": [],
+        }
+    except Exception as exc:  # noqa: BLE001 - surfaced as server-tool error block.
+        log(f"Firecrawl search failed: {exc}", request_id=request_id)
+        return {
+            "query": query,
+            "error_code": "unavailable",
+            "counted": False,
+            "results": [],
+            "model_results": [],
+        }
+
+    web_results = []
+    data = payload.get("data")
+    if isinstance(data, dict) and isinstance(data.get("web"), list):
+        web_results = data["web"]
+
+    results: list[dict[str, Any]] = []
+    model_results: list[dict[str, Any]] = []
+    for item in web_results:
+        if not isinstance(item, dict):
+            continue
+        url = str(item.get("url") or item.get("metadata", {}).get("url") or "").strip()
+        if not url:
+            continue
+        title = str(item.get("title") or item.get("metadata", {}).get("title") or url).strip()
+        description = str(item.get("description") or item.get("snippet") or "").strip()
+        markdown = str(item.get("markdown") or "").strip()
+        results.append(
+            {
+                "type": "web_search_result",
+                "url": url,
+                "title": title,
+            }
+        )
+        model_results.append(
+            {
+                "title": title,
+                "url": url,
+                "content": (markdown or description)[:1200],
+            }
+        )
+
+    log(
+        f"Firecrawl search returned {len(results)} results; credits={payload.get('creditsUsed')}",
+        request_id=request_id,
+    )
+    return {
+        "query": query,
+        "error_code": None,
+        "counted": True,
+        "results": results,
+        "model_results": model_results,
+        "credits_used": payload.get("creditsUsed"),
+    }
+
+
+def execute_proxy_web_search(
+    query: str,
+    spec: dict[str, Any],
+    *,
+    request_id: str | None = None,
+) -> dict[str, Any]:
+    if CONFIG.server_web_search == "firecrawl":
+        return firecrawl_search(query, spec, request_id=request_id)
+    return tavily_search(query, spec, request_id=request_id)
+
+
+def proxy_web_search_result_for_model(result: dict[str, Any]) -> str:
+    if result.get("error_code"):
+        return json.dumps(
+            {
+                "type": "web_search_tool_result_error",
+                "error_code": result["error_code"],
+            }
+        )
+    return json.dumps(
+        {
+            "query": result.get("query") or "",
+            "results": result.get("model_results") or [],
+        }
+    )
 
 
 def tool_schema_map(
@@ -792,42 +1133,19 @@ def tool_schema_map(
     tools = payload.get("tools")
     if not isinstance(tools, list):
         return {}
-    allowed = effective_tool_allowlist(payload)
     schemas: dict[str, dict[str, Any]] = {}
     for tool in tools:
         if not isinstance(tool, dict):
             continue
-        name = tool.get("name")
-        if allowed is not None and name not in allowed:
+        if is_anthropic_server_tool(tool):
             continue
+        name = tool.get("name")
         schema = tool.get("input_schema")
         if isinstance(name, str) and name and isinstance(schema, dict):
             schemas[name] = schema
         elif isinstance(name, str) and name:
             schemas[name] = {"type": "object"}
     return schemas
-
-
-def classify_request_kind(
-    payload: dict[str, Any],
-    request: dict[str, Any],
-) -> str:
-    offered = set(tool_names(payload))
-    forwarded = {
-        item.get("function", {}).get("name")
-        for item in request.get("tools") or []
-        if isinstance(item, dict)
-    }
-    forwarded = {name for name in forwarded if isinstance(name, str)}
-    harness = set(CONFIG.harness_tools)
-
-    if offered & harness or forwarded & harness:
-        return "harness"
-    if forwarded:
-        return "tool_agent"
-    if offered:
-        return "tools_hidden"
-    return "plain"
 
 
 def schema_digest(schema: Any) -> str:
@@ -895,6 +1213,317 @@ def log_tool_schema_inventory(payload: dict[str, Any]) -> None:
             handle.write(json.dumps(record, sort_keys=True) + "\n")
     except OSError as exc:
         log(f"could not write schema inventory to {CONFIG.schema_log_path}: {exc}")
+
+
+def json_size(value: Any) -> int:
+    return len(json.dumps(value, separators=(",", ":"), sort_keys=True, default=str))
+
+
+def stable_digest(value: Any) -> str:
+    encoded = json.dumps(value, separators=(",", ":"), sort_keys=True, default=str)
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()[:24]
+
+
+def context_pressure(estimated_tokens: int) -> str:
+    if estimated_tokens >= 192_000:
+        return "critical"
+    if estimated_tokens >= 128_000:
+        return "high"
+    if estimated_tokens >= 96_000:
+        return "watch"
+    return "ok"
+
+
+def message_roles(messages: Any) -> list[str]:
+    if not isinstance(messages, list):
+        return []
+    roles: list[str] = []
+    for message in messages:
+        if isinstance(message, dict):
+            roles.append(str(message.get("role") or ""))
+        else:
+            roles.append(type(message).__name__)
+    return roles
+
+
+def openai_prefix_cache_candidate(openai_request: dict[str, Any]) -> dict[str, Any]:
+    messages = openai_request.get("messages")
+    if not isinstance(messages, list):
+        messages = []
+    tools = openai_request.get("tools")
+    if not isinstance(tools, list):
+        tools = []
+
+    last_user_index = -1
+    for idx, message in enumerate(messages):
+        if isinstance(message, dict) and message.get("role") == "user":
+            last_user_index = idx
+
+    if last_user_index >= 0:
+        split_index = last_user_index
+        split_strategy = "before_last_user_message"
+    else:
+        split_index = len(messages)
+        split_strategy = "all_messages_no_user_tail"
+
+    prefix_messages = messages[:split_index]
+    tail_messages = messages[split_index:]
+    token_prefix = {
+        "messages": prefix_messages,
+        "tools": tools,
+    }
+    full_prompt = {
+        "messages": messages,
+        "tools": tools,
+    }
+    tail = {"messages": tail_messages}
+    estimated_prefix_tokens = estimate_tokens(token_prefix)
+    estimated_tail_tokens = estimate_tokens(tail)
+    estimated_full_prompt_tokens = estimate_tokens(full_prompt)
+
+    return {
+        "version": 1,
+        "split_strategy": split_strategy,
+        "split_message_index": split_index,
+        "prefix_hash": stable_digest(token_prefix),
+        "prefix_json_chars": json_size(token_prefix),
+        "estimated_prefix_tokens": estimated_prefix_tokens,
+        "prefix_message_count": len(prefix_messages),
+        "prefix_roles": message_roles(prefix_messages),
+        "tail_hash": stable_digest(tail),
+        "tail_json_chars": json_size(tail),
+        "estimated_tail_tokens": estimated_tail_tokens,
+        "tail_message_count": len(tail_messages),
+        "tail_roles": message_roles(tail_messages),
+        "tools_hash": stable_digest(tools),
+        "tools_json_chars": json_size(tools),
+        "tools_count": len(tools),
+        "full_prompt_hash": stable_digest(full_prompt),
+        "full_prompt_json_chars": json_size(full_prompt),
+        "estimated_full_prompt_tokens": estimated_full_prompt_tokens,
+        "context_pressure": context_pressure(estimated_full_prompt_tokens),
+        "model": openai_request.get("model"),
+        "tool_choice_hash": stable_digest(openai_request.get("tool_choice")),
+    }
+
+
+def content_shape(content: Any) -> dict[str, Any]:
+    if isinstance(content, str):
+        return {"kind": "text", "text_chars": len(content)}
+    if isinstance(content, list):
+        blocks: list[dict[str, Any]] = []
+        text_chars = 0
+        tool_result_chars = 0
+        for block in content:
+            if not isinstance(block, dict):
+                rendered = str(block)
+                text_chars += len(rendered)
+                blocks.append({"type": "unknown", "json_chars": json_size(block)})
+                continue
+            block_type = str(block.get("type") or "unknown")
+            summary: dict[str, Any] = {
+                "type": block_type,
+                "json_chars": json_size(block),
+            }
+            if block_type == "text":
+                chars = len(str(block.get("text") or ""))
+                text_chars += chars
+                summary["text_chars"] = chars
+            elif block_type == "tool_result":
+                chars = len(block_text(block.get("content")))
+                tool_result_chars += chars
+                summary["content_chars"] = chars
+            elif block_type == "tool_use":
+                name = block.get("name")
+                summary["name"] = name if isinstance(name, str) else None
+                summary["input_json_chars"] = json_size(block.get("input") or {})
+            blocks.append(summary)
+        return {
+            "kind": "blocks",
+            "block_count": len(content),
+            "text_chars": text_chars,
+            "tool_result_chars": tool_result_chars,
+            "blocks": blocks,
+        }
+    if isinstance(content, dict):
+        return {
+            "kind": "object",
+            "json_chars": json_size(content),
+            "text_chars": len(block_text(content)),
+            "keys": sorted(str(key) for key in content),
+        }
+    return {
+        "kind": type(content).__name__,
+        "text_chars": len(block_text(content)),
+    }
+
+
+def system_shape(system: Any) -> dict[str, Any]:
+    shape = content_shape(system)
+    if isinstance(system, dict):
+        shape["field_text_chars"] = {
+            str(key): len(block_text(value))
+            for key, value in system.items()
+        }
+    return shape
+
+
+def tool_inventory_shape(tools: Any) -> dict[str, Any]:
+    if not isinstance(tools, list):
+        return {
+            "tool_count": 0,
+            "description_chars": 0,
+            "schema_json_chars": 0,
+            "definition_json_chars": 0,
+            "tools": [],
+        }
+
+    items: list[dict[str, Any]] = []
+    description_chars = 0
+    schema_json_chars = 0
+    definition_json_chars = 0
+    for tool in tools:
+        if not isinstance(tool, dict):
+            continue
+        name = tool.get("name")
+        tool_type = tool.get("type")
+        description_len = len(str(tool.get("description") or ""))
+        schema = tool.get("input_schema")
+        schema_len = json_size(schema)
+        definition_len = json_size(tool)
+        description_chars += description_len
+        schema_json_chars += schema_len
+        definition_json_chars += definition_len
+        items.append(
+            {
+                "name": name if isinstance(name, str) else None,
+                "tool_type": tool_type if isinstance(tool_type, str) else None,
+                "description_chars": description_len,
+                "schema_json_chars": schema_len,
+                "definition_json_chars": definition_len,
+                "schema": summarize_tool_schema(schema),
+            }
+        )
+    return {
+        "tool_count": len(items),
+        "description_chars": description_chars,
+        "schema_json_chars": schema_json_chars,
+        "definition_json_chars": definition_json_chars,
+        "tools": items,
+    }
+
+
+def message_shapes(messages: Any) -> list[dict[str, Any]]:
+    if not isinstance(messages, list):
+        return []
+    result: list[dict[str, Any]] = []
+    for idx, message in enumerate(messages):
+        if not isinstance(message, dict):
+            result.append({"index": idx, "kind": type(message).__name__, "json_chars": json_size(message)})
+            continue
+        content = content_shape(message.get("content"))
+        result.append(
+            {
+                "index": idx,
+                "role": message.get("role"),
+                "json_chars": json_size(message),
+                "content": content,
+            }
+        )
+    return result
+
+
+def write_jsonl(path: str, record: dict[str, Any]) -> None:
+    directory = os.path.dirname(path)
+    if directory:
+        os.makedirs(directory, exist_ok=True)
+    with open(path, "a", encoding="utf-8") as handle:
+        handle.write(json.dumps(record, sort_keys=True) + "\n")
+
+
+def write_private_json(path: str, payload: dict[str, Any]) -> None:
+    directory = os.path.dirname(path)
+    if directory:
+        os.makedirs(directory, mode=0o700, exist_ok=True)
+        try:
+            os.chmod(directory, 0o700)
+        except OSError:
+            pass
+    encoded = json.dumps(payload, indent=2, sort_keys=True, default=str).encode("utf-8")
+    flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
+    fd = os.open(path, flags, 0o600)
+    with os.fdopen(fd, "wb") as handle:
+        handle.write(encoded)
+        handle.write(b"\n")
+
+
+def capture_request_debug(
+    *,
+    request_id: str,
+    request_kind: str,
+    request_shape: dict[str, Any],
+    payload: dict[str, Any],
+    openai_request: dict[str, Any],
+    mtplx_background: dict[str, Any],
+) -> None:
+    if CONFIG.request_shape_log_path:
+        record = {
+            "ts": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "request_id": request_id,
+            "kind": request_kind,
+            "shape": request_shape,
+            "anthropic": {
+                "model": payload.get("model"),
+                "stream": bool(payload.get("stream")),
+                "max_tokens": payload.get("max_tokens"),
+                "json_chars": json_size(payload),
+                "system": system_shape(payload.get("system")),
+                "messages": message_shapes(payload.get("messages")),
+                "tools": tool_inventory_shape(payload.get("tools")),
+            },
+            "openai": {
+                "model": openai_request.get("model"),
+                "stream": bool(openai_request.get("stream")),
+                "max_tokens": openai_request.get("max_tokens"),
+                "json_chars": json_size(openai_request),
+                "cache_candidate": openai_prefix_cache_candidate(openai_request),
+                "message_count": len(openai_request.get("messages") or []),
+                "message_roles": openai_message_roles(openai_request),
+                "message_text_chars": openai_messages_text_len(openai_request),
+                "tools": tool_inventory_shape(
+                    [
+                        {
+                            "name": item.get("function", {}).get("name"),
+                            "description": item.get("function", {}).get("description"),
+                            "input_schema": item.get("function", {}).get("parameters"),
+                        }
+                        for item in openai_request.get("tools") or []
+                        if isinstance(item, dict)
+                    ]
+                ),
+            },
+            "mtplx_background": mtplx_background,
+        }
+        try:
+            write_jsonl(CONFIG.request_shape_log_path, record)
+        except OSError as exc:
+            log(f"could not write request shape log to {CONFIG.request_shape_log_path}: {exc}")
+
+    if CONFIG.raw_request_capture_dir:
+        safe_request_id = re.sub(r"[^A-Za-z0-9_.-]", "_", request_id)
+        try:
+            os.makedirs(CONFIG.raw_request_capture_dir, mode=0o700, exist_ok=True)
+            os.chmod(CONFIG.raw_request_capture_dir, 0o700)
+            write_private_json(
+                os.path.join(CONFIG.raw_request_capture_dir, f"{safe_request_id}.anthropic.json"),
+                payload,
+            )
+            write_private_json(
+                os.path.join(CONFIG.raw_request_capture_dir, f"{safe_request_id}.openai.json"),
+                openai_request,
+            )
+        except OSError as exc:
+            log(f"could not write raw request capture to {CONFIG.raw_request_capture_dir}: {exc}")
 
 
 def single_tool_name(names: list[str]) -> str | None:
@@ -1086,6 +1715,26 @@ def repair_submit_output_arguments(
     return repaired
 
 
+def repair_generate_plan_arguments(
+    name: str,
+    arguments: dict[str, Any],
+    schema: dict[str, Any] | None,
+) -> dict[str, Any]:
+    if CONFIG.tool_repair != "metadata" or name != "generate_plan" or not schema:
+        return arguments
+    if arguments.get("approve") is not True:
+        return arguments
+
+    plan_fields = ("task_summary", "steps", "desired_outputs", "feasibility")
+    if not any(field in arguments for field in plan_fields):
+        return arguments
+
+    repaired = dict(arguments)
+    repaired.pop("approve", None)
+    log("repaired generate_plan approve+content call by preserving plan content")
+    return repaired
+
+
 def validate_python_arguments(name: str, arguments: dict[str, Any]) -> str | None:
     if name != "python":
         return None
@@ -1181,6 +1830,7 @@ def validate_tool_use_block(
     schema = tool_schemas.get(name)
     arguments = repair_metadata_arguments(name, arguments, schema)
     arguments = repair_submit_output_arguments(name, arguments, schema)
+    arguments = repair_generate_plan_arguments(name, arguments, schema)
     block["input"] = arguments
 
     if CONFIG.tool_validation == "schema":
@@ -1228,9 +1878,54 @@ def contains_raw_tool_call_markup(text: str) -> bool:
         for marker in (
             "<tool_call",
             "<function=",
+            "<call_tool",
             "<parameter=",
             "<anonymous_function",
         )
+    )
+
+
+def raw_tool_call_function_names(text: str) -> list[str]:
+    names: list[str] = []
+    seen: set[str] = set()
+    raw_names = re.findall(r"<function=([A-Za-z_][A-Za-z0-9_.-]*)>", text)
+    raw_names.extend(
+        re.findall(r"<call_tool\s+name=[\"']?([A-Za-z_][A-Za-z0-9_.-]*)[\"']?\s*>", text)
+    )
+    for name in raw_names:
+        if name not in seen:
+            seen.add(name)
+            names.append(name)
+    return names
+
+
+def log_text_tool_markup_parse_result(
+    *,
+    content: Any,
+    offered_tool_names: list[str],
+    parsed_tool_name: str | None,
+    request_id: str | None = None,
+) -> None:
+    if not isinstance(content, str) or not contains_raw_tool_call_markup(content):
+        return
+    raw_function_names = raw_tool_call_function_names(content)
+    offered_names = set(offered_tool_names)
+    offered_matches = [name for name in raw_function_names if name in offered_names]
+    if parsed_tool_name:
+        log(
+            "parsed raw text tool-call markup into "
+            f"tool_use name={parsed_tool_name!r} "
+            f"raw_functions={raw_function_names[:5]!r}",
+            request_id=request_id,
+        )
+        return
+    log(
+        "text tool-call markup was not parsed; "
+        f"raw_functions={raw_function_names[:5]!r} "
+        f"offered_matches={offered_matches[:5]!r} "
+        f"offered_tool_count={len(offered_tool_names)} "
+        f"parse_text_tool_calls={CONFIG.parse_text_tool_calls}",
+        request_id=request_id,
     )
 
 
@@ -1392,12 +2087,25 @@ def parse_xmlish_tool_call_text(
     allowed_tool_names: list[str] | None = None,
 ) -> tuple[str, dict[str, Any]] | None:
     stripped = text.strip()
-    if not stripped.startswith("<tool_call>"):
-        return None
-    match = re.search(r"<function=([A-Za-z_][A-Za-z0-9_.-]*)>", stripped)
-    if not match:
-        return None
-    name = match.group(1)
+    function_match = None
+    body_start = 0
+    terminator_pattern = r"</function>|</tool_call>"
+    if stripped.startswith("<tool_call>"):
+        function_match = re.search(r"<function=([A-Za-z_][A-Za-z0-9_.-]*)>", stripped)
+        if not function_match:
+            return None
+        body_start = function_match.end()
+    else:
+        call_tool_match = re.match(
+            r"<call_tool\s+name=[\"']?([A-Za-z_][A-Za-z0-9_.-]*)[\"']?\s*>",
+            stripped,
+        )
+        if not call_tool_match:
+            return None
+        function_match = call_tool_match
+        body_start = call_tool_match.end()
+        terminator_pattern = r"</call_tool>"
+    name = function_match.group(1)
     allowed_names = set(allowed_tool_names or [])
     if allowed_names and name not in allowed_names:
         return None
@@ -1410,8 +2118,7 @@ def parse_xmlish_tool_call_text(
     ):
         raw_arguments[parameter] = parse_loose_value(raw_value)
     if not raw_arguments:
-        body_start = match.end()
-        body_match = re.search(r"</function>|</tool_call>", stripped[body_start:], flags=re.DOTALL)
+        body_match = re.search(terminator_pattern, stripped[body_start:], flags=re.DOTALL)
         body_end = body_start + body_match.start() if body_match else len(stripped)
         body = stripped[body_start:body_end]
         parameter_matches = list(
@@ -1484,10 +2191,14 @@ def parse_text_tool_call(
         if isinstance(arguments, dict) and (not allowed_names or parts[1] in allowed_names):
             return tool_use_block(parts[1], arguments)
 
-    marker = "<tool_call>"
-    marker_at = stripped.find(marker)
-    if marker_at < 0:
+    marker_locations = [
+        (position, marker)
+        for marker in ("<tool_call>", "<call_tool")
+        if (position := stripped.find(marker)) >= 0
+    ]
+    if not marker_locations:
         return None
+    marker_at, marker = min(marker_locations)
 
     xmlish = parse_xmlish_tool_call_text(
         stripped[marker_at:],
@@ -1496,6 +2207,9 @@ def parse_text_tool_call(
     if xmlish is not None:
         name, arguments = xmlish
         return tool_use_block(name, arguments)
+
+    if marker != "<tool_call>":
+        return None
 
     raw = stripped[marker_at + len(marker) :].strip()
     start_positions = [pos for pos in (raw.find("["), raw.find("{")) if pos >= 0]
@@ -1529,6 +2243,8 @@ def openai_to_anthropic(
     data: dict[str, Any],
     requested_model: str | None = None,
     tool_schemas: dict[str, dict[str, Any]] | None = None,
+    server_tool_events: list[dict[str, Any]] | None = None,
+    request_id: str | None = None,
 ) -> dict[str, Any]:
     choices = data.get("choices") or []
     choice = choices[0] if choices else {}
@@ -1546,8 +2262,20 @@ def openai_to_anthropic(
     )
     parsed_text_tool = validate_tool_use_block(parsed_text_tool, schemas)
     if parsed_text_tool:
+        log_text_tool_markup_parse_result(
+            content=content,
+            offered_tool_names=offered_tool_names,
+            parsed_tool_name=parsed_text_tool.get("name"),
+            request_id=request_id,
+        )
         content_blocks.append(parsed_text_tool)
     elif content:
+        log_text_tool_markup_parse_result(
+            content=content,
+            offered_tool_names=offered_tool_names,
+            parsed_tool_name=None,
+            request_id=request_id,
+        )
         content_blocks.append({"type": "text", "text": clean_model_text(str(content))})
 
     for call in message.get("tool_calls") or []:
@@ -1562,6 +2290,39 @@ def openai_to_anthropic(
         if candidate:
             content_blocks.append(candidate)
 
+    server_events = server_tool_events or []
+    if server_events:
+        prefixed_blocks: list[dict[str, Any]] = []
+        for event in server_events:
+            if event.get("type") != "web_search":
+                continue
+            result = event.get("result") if isinstance(event.get("result"), dict) else {}
+            tool_use_id = str(event.get("id") or f"srvtoolu_{uuid.uuid4().hex}")
+            query = str(event.get("query") or result.get("query") or "")
+            prefixed_blocks.append(
+                {
+                    "type": "server_tool_use",
+                    "id": tool_use_id,
+                    "name": PROXY_WEB_SEARCH_TOOL_NAME,
+                    "input": {"query": query},
+                }
+            )
+            if result.get("error_code"):
+                content: Any = {
+                    "type": "web_search_tool_result_error",
+                    "error_code": result["error_code"],
+                }
+            else:
+                content = result.get("results") or []
+            prefixed_blocks.append(
+                {
+                    "type": "web_search_tool_result",
+                    "tool_use_id": tool_use_id,
+                    "content": content,
+                }
+            )
+        content_blocks = prefixed_blocks + content_blocks
+
     finish_reason = choice.get("finish_reason")
     if any(block.get("type") == "tool_use" for block in content_blocks):
         stop_reason = "tool_use"
@@ -1571,6 +2332,17 @@ def openai_to_anthropic(
         stop_reason = "end_turn"
 
     usage = data.get("usage") or {}
+    usage_payload: dict[str, Any] = {
+        "input_tokens": int(usage.get("prompt_tokens") or 0),
+        "output_tokens": int(usage.get("completion_tokens") or 0),
+    }
+    web_search_requests = sum(
+        1
+        for event in server_events
+        if isinstance(event.get("result"), dict) and event["result"].get("counted")
+    )
+    if web_search_requests:
+        usage_payload["server_tool_use"] = {"web_search_requests": web_search_requests}
     return {
         "id": f"msg_{uuid.uuid4().hex}",
         "type": "message",
@@ -1579,18 +2351,14 @@ def openai_to_anthropic(
         "content": content_blocks or [{"type": "text", "text": ""}],
         "stop_reason": stop_reason,
         "stop_sequence": None,
-        "usage": {
-            "input_tokens": int(usage.get("prompt_tokens") or 0),
-            "output_tokens": int(usage.get("completion_tokens") or 0),
-        },
+        "usage": usage_payload,
     }
 
 
 def upstream_request_headers(*, stream: bool = False) -> dict[str, str]:
-    api_key = _env_first(("UPSTREAM_API_KEY", "MTPLX_API_KEY"), "local-mtplx")
     headers = {
         "Content-Type": "application/json",
-        "Authorization": f"Bearer {api_key}",
+        "Authorization": f"Bearer {CONFIG.upstream_api_key}",
     }
     if stream:
         headers["Accept"] = "text/event-stream"
@@ -1640,6 +2408,380 @@ def call_openai_chat(
     METRICS.record_provider_latency(kind=request_kind, elapsed_seconds=elapsed)
     log(f"upstream completed in {elapsed:.1f}s", request_id=request_id)
     return json.loads(raw)
+
+
+def openai_message_from_choice(data: dict[str, Any]) -> dict[str, Any]:
+    choices = data.get("choices") or []
+    choice = choices[0] if choices else {}
+    message = choice.get("message")
+    return message if isinstance(message, dict) else {}
+
+
+def proxy_web_search_calls(
+    data: dict[str, Any],
+    *,
+    request_id: str | None = None,
+) -> list[dict[str, Any]]:
+    calls: list[dict[str, Any]] = []
+    message = openai_message_from_choice(data)
+    for call in message.get("tool_calls") or []:
+        if not isinstance(call, dict):
+            continue
+        function = call.get("function")
+        if isinstance(function, dict) and function.get("name") == PROXY_WEB_SEARCH_TOOL_NAME:
+            calls.append(call)
+    if calls:
+        return calls
+
+    candidate = parse_proxy_web_search_text_call(message.get("content"))
+    candidate = validate_tool_use_block(
+        candidate,
+        {PROXY_WEB_SEARCH_TOOL_NAME: PROXY_WEB_SEARCH_TOOL_SCHEMA},
+    )
+    if not candidate:
+        return calls
+    log_text_tool_markup_parse_result(
+        content=message.get("content"),
+        offered_tool_names=[PROXY_WEB_SEARCH_TOOL_NAME],
+        parsed_tool_name=PROXY_WEB_SEARCH_TOOL_NAME,
+        request_id=request_id,
+    )
+    calls.append(
+        {
+            "id": candidate.get("id") or f"call_{uuid.uuid4().hex}",
+            "type": "function",
+            "function": {
+                "name": PROXY_WEB_SEARCH_TOOL_NAME,
+                "arguments": json.dumps(candidate.get("input") or {}),
+            },
+        }
+    )
+    return calls
+
+
+def parse_proxy_web_search_text_call(content: Any) -> dict[str, Any] | None:
+    if not isinstance(content, str):
+        return None
+    stripped = content.strip()
+    allowed_tool_names = [PROXY_WEB_SEARCH_TOOL_NAME]
+
+    json_tool = parse_json_tool_call_text(
+        stripped,
+        allowed_tool_names=allowed_tool_names,
+    )
+    if json_tool:
+        return json_tool
+
+    arguments = (
+        parse_function_call_text(stripped, PROXY_WEB_SEARCH_TOOL_NAME)
+        or parse_markdown_function_call_text(stripped, PROXY_WEB_SEARCH_TOOL_NAME)
+    )
+    if arguments is not None:
+        return tool_use_block(PROXY_WEB_SEARCH_TOOL_NAME, arguments)
+
+    marker_locations = [
+        (position, marker)
+        for marker in ("<tool_call>", "<call_tool")
+        if (position := stripped.find(marker)) >= 0
+    ]
+    search_text = stripped
+    if marker_locations:
+        marker_at, _marker = min(marker_locations)
+        search_text = stripped[marker_at:]
+
+    xmlish = parse_xmlish_tool_call_text(
+        search_text,
+        allowed_tool_names=allowed_tool_names,
+    )
+    if xmlish is None:
+        return None
+    name, arguments = xmlish
+    return tool_use_block(name, arguments)
+
+
+def remove_proxy_web_search_tool(request: dict[str, Any]) -> None:
+    tools = request.get("tools")
+    if not isinstance(tools, list):
+        return
+    kept = []
+    for tool in tools:
+        function = tool.get("function") if isinstance(tool, dict) else None
+        if isinstance(function, dict) and function.get("name") == PROXY_WEB_SEARCH_TOOL_NAME:
+            continue
+        kept.append(tool)
+    if kept:
+        request["tools"] = kept
+    else:
+        request.pop("tools", None)
+
+
+def merge_openai_usage(total: dict[str, int], data: dict[str, Any]) -> None:
+    usage = data.get("usage") or {}
+    for key in ("prompt_tokens", "completion_tokens", "total_tokens"):
+        value = usage.get(key)
+        if isinstance(value, int):
+            total[key] = total.get(key, 0) + value
+
+
+def synthetic_openai_error_message(text: str) -> dict[str, Any]:
+    return {
+        "choices": [
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": text,
+                },
+                "finish_reason": "stop",
+            }
+        ],
+        "usage": {"prompt_tokens": 0, "completion_tokens": max(1, len(text) // 4)},
+    }
+
+
+class ServerToolLoopJob:
+    def __init__(self, *, key: str, owner_request_id: str | None) -> None:
+        self.key = key
+        self.owner_request_id = owner_request_id
+        self.created_at = time.monotonic()
+        self.completed_at: float | None = None
+        self.done = threading.Event()
+        self.kind: str | None = None
+        self.result: Any = None
+        self.had_disconnect = False
+
+
+SERVER_TOOL_LOOP_JOBS: dict[str, ServerToolLoopJob] = {}
+SERVER_TOOL_LOOP_JOBS_LOCK = threading.Lock()
+
+
+def server_tool_loop_job_key(
+    request: dict[str, Any],
+    payload: dict[str, Any],
+    *,
+    requested_model: str,
+    tool_schemas: dict[str, dict[str, Any]],
+) -> str:
+    key_payload = {
+        "request": request,
+        "requested_model": requested_model,
+        "tool_schemas": tool_schemas,
+        "server_web_search": {
+            "spec": anthropic_web_search_spec(payload),
+            "mode": CONFIG.server_web_search,
+            "max_results": CONFIG.server_web_search_max_results,
+            "max_uses": CONFIG.server_web_search_max_uses,
+            "tavily_base_url": CONFIG.tavily_base_url,
+            "firecrawl_base_url": CONFIG.firecrawl_base_url,
+        },
+    }
+    raw = json.dumps(
+        key_payload,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+        default=str,
+    )
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def purge_server_tool_loop_jobs(now: float) -> None:
+    for key, job in list(SERVER_TOOL_LOOP_JOBS.items()):
+        if job.done.is_set():
+            completed_at = job.completed_at or job.created_at
+            if now - completed_at > SERVER_TOOL_LOOP_REPLAY_TTL_SECONDS:
+                SERVER_TOOL_LOOP_JOBS.pop(key, None)
+        elif now - job.created_at > SERVER_TOOL_LOOP_ACTIVE_TTL_SECONDS:
+            SERVER_TOOL_LOOP_JOBS.pop(key, None)
+
+
+def complete_server_tool_loop_job(job: ServerToolLoopJob, kind: str, result: Any) -> None:
+    with SERVER_TOOL_LOOP_JOBS_LOCK:
+        job.kind = kind
+        job.result = result
+        job.completed_at = time.monotonic()
+        job.done.set()
+        if kind != "message":
+            SERVER_TOOL_LOOP_JOBS.pop(job.key, None)
+
+
+def mark_server_tool_loop_job_disconnected(job: ServerToolLoopJob) -> None:
+    with SERVER_TOOL_LOOP_JOBS_LOCK:
+        job.had_disconnect = True
+
+
+def forget_server_tool_loop_job(job: ServerToolLoopJob) -> None:
+    with SERVER_TOOL_LOOP_JOBS_LOCK:
+        if SERVER_TOOL_LOOP_JOBS.get(job.key) is job:
+            SERVER_TOOL_LOOP_JOBS.pop(job.key, None)
+
+
+def get_or_start_server_tool_loop_job(
+    request: dict[str, Any],
+    payload: dict[str, Any],
+    *,
+    requested_model: str,
+    tool_schemas: dict[str, dict[str, Any]],
+    request_id: str | None,
+    request_kind: str,
+) -> tuple[ServerToolLoopJob, str]:
+    key = server_tool_loop_job_key(
+        request,
+        payload,
+        requested_model=requested_model,
+        tool_schemas=tool_schemas,
+    )
+    now = time.monotonic()
+    with SERVER_TOOL_LOOP_JOBS_LOCK:
+        purge_server_tool_loop_jobs(now)
+        existing = SERVER_TOOL_LOOP_JOBS.get(key)
+        if existing is not None:
+            if not existing.done.is_set():
+                log(
+                    f"joining in-flight server tool loop job key={key[:12]}",
+                    request_id=request_id,
+                )
+                return existing, "inflight"
+            completed_at = existing.completed_at or existing.created_at
+            if (
+                existing.kind == "message"
+                and existing.had_disconnect
+                and now - completed_at <= SERVER_TOOL_LOOP_REPLAY_TTL_SECONDS
+            ):
+                log(
+                    f"replaying completed server tool loop job key={key[:12]}",
+                    request_id=request_id,
+                )
+                return existing, "replay"
+            SERVER_TOOL_LOOP_JOBS.pop(key, None)
+
+        job = ServerToolLoopJob(key=key, owner_request_id=request_id)
+        SERVER_TOOL_LOOP_JOBS[key] = job
+
+    def run_loop() -> None:
+        try:
+            upstream, server_tool_events = call_openai_chat_with_proxy_server_tools(
+                request,
+                payload,
+                request_id=job.owner_request_id,
+                request_kind=request_kind,
+            )
+            message = openai_to_anthropic(
+                upstream,
+                requested_model=requested_model,
+                tool_schemas=tool_schemas,
+                server_tool_events=server_tool_events,
+                request_id=job.owner_request_id,
+            )
+            complete_server_tool_loop_job(job, "message", message)
+        except BaseException as exc:  # pragma: no cover - exercised through queue consumer.
+            complete_server_tool_loop_job(job, "error", exc)
+
+    worker = threading.Thread(target=run_loop, daemon=True)
+    worker.start()
+    log(f"started server tool loop job key={key[:12]}", request_id=request_id)
+    return job, "new"
+
+
+def call_openai_chat_with_proxy_server_tools(
+    request: dict[str, Any],
+    payload: dict[str, Any],
+    *,
+    request_id: str | None = None,
+    request_kind: str = "unknown",
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    spec = anthropic_web_search_spec(payload)
+    if not spec or not has_proxy_web_search_tool(request):
+        return (
+            call_openai_chat(
+                request,
+                request_id=request_id,
+                request_kind=request_kind,
+            ),
+            [],
+        )
+
+    current = dict(request)
+    current["messages"] = list(request.get("messages") or [])
+    current["stream"] = False
+    events: list[dict[str, Any]] = []
+    total_usage: dict[str, int] = {}
+    searches_used = 0
+    max_uses = int(spec["max_uses"])
+    max_iterations = max_uses + 2
+
+    for _iteration in range(max_iterations):
+        data = call_openai_chat(
+            current,
+            request_id=request_id,
+            request_kind=request_kind,
+        )
+        merge_openai_usage(total_usage, data)
+        web_calls = proxy_web_search_calls(data, request_id=request_id)
+        if not web_calls:
+            if total_usage:
+                data["usage"] = total_usage
+            return data, events
+
+        message = openai_message_from_choice(data)
+        assistant_message: dict[str, Any] = {
+            "role": "assistant",
+            "content": message.get("content"),
+            "tool_calls": web_calls,
+        }
+        current["messages"].append(assistant_message)
+        current.pop("tool_choice", None)
+
+        for call in web_calls:
+            function = call.get("function") if isinstance(call.get("function"), dict) else {}
+            raw_args = function.get("arguments") or "{}"
+            try:
+                args = json.loads(raw_args) if isinstance(raw_args, str) else raw_args
+            except json.JSONDecodeError:
+                args = {}
+            if not isinstance(args, dict):
+                args = {}
+            query = str(args.get("query") or "").strip()
+            call_id = str(call.get("id") or f"call_{uuid.uuid4().hex}")
+            tool_use_id = server_tool_use_id_from_openai_call_id(call_id)
+
+            if searches_used >= max_uses:
+                result = {
+                    "query": query,
+                    "error_code": "max_uses_exceeded",
+                    "counted": False,
+                    "results": [],
+                    "model_results": [],
+                }
+                remove_proxy_web_search_tool(current)
+            else:
+                result = execute_proxy_web_search(query, spec, request_id=request_id)
+                if result.get("counted"):
+                    searches_used += 1
+                if searches_used >= max_uses:
+                    remove_proxy_web_search_tool(current)
+
+            event = {
+                "type": "web_search",
+                "id": tool_use_id,
+                "query": query,
+                "result": result,
+            }
+            events.append(event)
+            current["messages"].append(
+                {
+                    "role": "tool",
+                    "tool_call_id": call_id,
+                    "content": proxy_web_search_result_for_model(result),
+                }
+            )
+
+    log("proxy-owned web search loop exceeded iteration cap", request_id=request_id)
+    fallback = synthetic_openai_error_message(
+        "The proxy web-search loop did not converge; answer from the search results already returned."
+    )
+    if total_usage:
+        fallback["usage"] = total_usage
+    return fallback, events
 
 
 def open_openai_stream(
@@ -1769,6 +2911,10 @@ def write_sse_comment(handler: BaseHTTPRequestHandler, comment: str) -> None:
     handler.wfile.write(f": {comment}\n\n".encode("utf-8"))
 
 
+def write_sse_ping(handler: BaseHTTPRequestHandler) -> None:
+    write_sse(handler, "ping", {"type": "ping"})
+
+
 def finish_sse(handler: BaseHTTPRequestHandler) -> None:
     handler.wfile.flush()
     handler.close_connection = True
@@ -1797,12 +2943,18 @@ def emit_stream_error(handler: BaseHTTPRequestHandler, error: Any) -> None:
     finish_sse(handler)
 
 
-def emit_anthropic_message_events(handler: BaseHTTPRequestHandler, message: dict[str, Any]) -> None:
+def emit_anthropic_message_start(
+    handler: BaseHTTPRequestHandler, message: dict[str, Any]
+) -> None:
     start_message = dict(message)
     start_message["content"] = []
     write_sse(handler, "message_start", {"type": "message_start", "message": start_message})
     handler.wfile.flush()
 
+
+def emit_anthropic_message_body_and_stop(
+    handler: BaseHTTPRequestHandler, message: dict[str, Any]
+) -> None:
     for index, block in enumerate(message.get("content") or []):
         block_type = block.get("type")
         if block_type == "text":
@@ -1854,9 +3006,54 @@ def emit_anthropic_message_events(handler: BaseHTTPRequestHandler, message: dict
                     },
                 },
             )
+        elif block_type == "server_tool_use":
+            write_sse(
+                handler,
+                "content_block_start",
+                {
+                    "type": "content_block_start",
+                    "index": index,
+                    "content_block": {
+                        "type": "server_tool_use",
+                        "id": block.get("id"),
+                        "name": block.get("name"),
+                        "input": {},
+                    },
+                },
+            )
+            write_sse(
+                handler,
+                "content_block_delta",
+                {
+                    "type": "content_block_delta",
+                    "index": index,
+                    "delta": {
+                        "type": "input_json_delta",
+                        "partial_json": json.dumps(block.get("input") or {}),
+                    },
+                },
+            )
+        elif block_type == "web_search_tool_result":
+            write_sse(
+                handler,
+                "content_block_start",
+                {
+                    "type": "content_block_start",
+                    "index": index,
+                    "content_block": {
+                        "type": "web_search_tool_result",
+                        "tool_use_id": block.get("tool_use_id"),
+                        "content": block.get("content"),
+                    },
+                },
+            )
         write_sse(handler, "content_block_stop", {"type": "content_block_stop", "index": index})
         handler.wfile.flush()
 
+    usage = {"output_tokens": message.get("usage", {}).get("output_tokens", 0)}
+    server_tool_use = message.get("usage", {}).get("server_tool_use")
+    if isinstance(server_tool_use, dict):
+        usage["server_tool_use"] = server_tool_use
     write_sse(
         handler,
         "message_delta",
@@ -1866,11 +3063,16 @@ def emit_anthropic_message_events(handler: BaseHTTPRequestHandler, message: dict
                 "stop_reason": message.get("stop_reason"),
                 "stop_sequence": message.get("stop_sequence"),
             },
-            "usage": {"output_tokens": message.get("usage", {}).get("output_tokens", 0)},
+            "usage": usage,
         },
     )
     write_sse(handler, "message_stop", {"type": "message_stop"})
     finish_sse(handler)
+
+
+def emit_anthropic_message_events(handler: BaseHTTPRequestHandler, message: dict[str, Any]) -> None:
+    emit_anthropic_message_start(handler, message)
+    emit_anthropic_message_body_and_stop(handler, message)
 
 
 def stream_anthropic(
@@ -1881,6 +3083,102 @@ def stream_anthropic(
 ) -> None:
     send_sse_headers(handler, request_id=request_id)
     emit_anthropic_message_events(handler, message)
+
+
+def stream_proxy_server_tool_loop_to_anthropic(
+    handler: BaseHTTPRequestHandler,
+    request: dict[str, Any],
+    payload: dict[str, Any],
+    *,
+    requested_model: str,
+    tool_schemas: dict[str, dict[str, Any]] | None = None,
+    request_id: str | None = None,
+    request_kind: str = "unknown",
+) -> None:
+    started = time.monotonic()
+    send_sse_headers(handler, request_id=request_id)
+    pending_message = {
+        "id": f"msg_{uuid.uuid4().hex}",
+        "type": "message",
+        "role": "assistant",
+        "model": requested_model or CONFIG.upstream_model,
+        "content": [],
+        "stop_reason": None,
+        "stop_sequence": None,
+        "usage": {"input_tokens": 0, "output_tokens": 0},
+    }
+    emit_anthropic_message_start(handler, pending_message)
+    schemas = tool_schemas or {}
+    job, job_source = get_or_start_server_tool_loop_job(
+        request,
+        payload,
+        requested_model=requested_model,
+        tool_schemas=schemas,
+        request_id=request_id,
+        request_kind=request_kind,
+    )
+    heartbeat_seconds = (
+        CONFIG.stream_heartbeat_seconds if CONFIG.stream_heartbeat_seconds > 0 else 10.0
+    )
+
+    while True:
+        if not job.done.wait(timeout=heartbeat_seconds):
+            try:
+                write_sse_comment(handler, "heartbeat")
+                write_sse_ping(handler)
+                handler.wfile.flush()
+            except (BrokenPipeError, ConnectionResetError, OSError) as exc:
+                if is_client_disconnect(exc):
+                    log(
+                        "client disconnected before proxy server tool loop completed",
+                        request_id=request_id,
+                    )
+                    mark_server_tool_loop_job_disconnected(job)
+                    return
+                raise
+            continue
+
+        kind = job.kind
+        result = job.result
+        if kind == "message":
+            try:
+                if isinstance(result, dict):
+                    result["id"] = pending_message["id"]
+                emit_anthropic_message_body_and_stop(handler, result)
+            except (BrokenPipeError, ConnectionResetError, OSError) as exc:
+                if is_client_disconnect(exc):
+                    log(
+                        "client disconnected before completed proxy server tool loop response",
+                        request_id=request_id,
+                    )
+                    mark_server_tool_loop_job_disconnected(job)
+                    return
+                raise
+            elapsed = time.monotonic() - started
+            METRICS.record_provider_latency(kind=request_kind, elapsed_seconds=elapsed)
+            log(
+                f"proxy server tool loop stream completed in {elapsed:.1f}s from {job_source}",
+                request_id=request_id,
+            )
+            forget_server_tool_loop_job(job)
+            return
+
+        exc = result
+        if isinstance(exc, UpstreamHTTPError):
+            METRICS.record_upstream_error(status=exc.status)
+            log(f"upstream HTTP error {exc.status}: {exc.detail[:500]}", request_id=request_id)
+            emit_stream_error(handler, {"message": exc.detail or str(exc)})
+            forget_server_tool_loop_job(job)
+            return
+
+        log(
+            f"proxy server tool loop error: {exc}\n{''.join(traceback.format_exception(exc))}",
+            request_id=request_id,
+        )
+        METRICS.record_upstream_error(status=502)
+        emit_stream_error(handler, {"message": str(exc)})
+        forget_server_tool_loop_job(job)
+        return
 
 
 def openai_finish_to_anthropic(finish_reason: str | None, saw_tool_use: bool) -> str:
@@ -2018,6 +3316,7 @@ def stream_openai_to_anthropic(
         ):
             if event_kind == "heartbeat":
                 write_sse_comment(handler, "heartbeat")
+                write_sse_ping(handler)
                 handler.wfile.flush()
                 continue
             if not isinstance(chunk, dict):
@@ -2043,6 +3342,7 @@ def stream_openai_to_anthropic(
                     chunk,
                     requested_model=requested_model,
                     tool_schemas=schemas,
+                    request_id=request_id,
                 )
                 if message_started or saw_any_content:
                     log(
@@ -2192,13 +3492,22 @@ class Handler(BaseHTTPRequestHandler):
                     "force_mentioned_tool": CONFIG.force_mentioned_tool,
                     "parse_text_tool_calls": CONFIG.parse_text_tool_calls,
                     "strip_thinking_text": CONFIG.strip_thinking_text,
-                    "schema_log_path": CONFIG.schema_log_path,
-                    "harness_tools": CONFIG.harness_tools,
-                    "harness_tool_allowlist": CONFIG.harness_tool_allowlist,
-                    "harness_force_submit_after_tool_results": (
-                        CONFIG.harness_force_submit_after_tool_results
+                    "schema_log_path": redacted_path_setting(CONFIG.schema_log_path),
+                    "request_shape_log_path": redacted_path_setting(
+                        CONFIG.request_shape_log_path
                     ),
+                    "raw_request_capture_dir": redacted_path_setting(
+                        CONFIG.raw_request_capture_dir
+                    ),
+                    "harness_tools": CONFIG.harness_tools,
                     "claude_science_compat": CONFIG.claude_science_compat,
+                    "server_web_search": {
+                        "mode": CONFIG.server_web_search,
+                        "max_results": CONFIG.server_web_search_max_results,
+                        "max_uses": CONFIG.server_web_search_max_uses,
+                        "tavily_key_set": bool(CONFIG.tavily_api_key),
+                        "firecrawl_key_set": bool(CONFIG.firecrawl_api_key),
+                    },
                     "mtplx_avoid_background_bypass": CONFIG.mtplx_avoid_background_bypass,
                     "mtplx_background_max_tokens": CONFIG.mtplx_background_max_tokens,
                     "mtplx_background_no_history_max_chars": CONFIG.mtplx_background_no_history_max_chars,
@@ -2256,7 +3565,14 @@ class Handler(BaseHTTPRequestHandler):
             request = anthropic_to_openai(payload, stream=stream_requested)
             mtplx_background = apply_mtplx_background_bypass_guard(request)
             schemas = tool_schema_map(payload)
-            active_stream_mode = CONFIG.stream_mode if stream_requested else "nonstream"
+            proxy_web_search_active = bool(
+                anthropic_web_search_spec(payload) and has_proxy_web_search_tool(request)
+            )
+            active_stream_mode = (
+                "server_tool_loop"
+                if stream_requested and proxy_web_search_active
+                else CONFIG.stream_mode if stream_requested else "nonstream"
+            )
             request_shape = build_request_shape(
                 payload,
                 request,
@@ -2268,6 +3584,15 @@ class Handler(BaseHTTPRequestHandler):
             request_kind = request_shape.kind
             METRICS.record_message(kind=request_kind, stream_mode=active_stream_mode)
             shape = request_shape.redacted_summary()
+            cache_candidate = openai_prefix_cache_candidate(request)
+            capture_request_debug(
+                request_id=request_id,
+                request_kind=request_kind,
+                request_shape=shape,
+                payload=payload,
+                openai_request=request,
+                mtplx_background=mtplx_background,
+            )
             log(
                 "request "
                 f"kind={shape['kind']} "
@@ -2282,10 +3607,26 @@ class Handler(BaseHTTPRequestHandler):
                 f"mtplx_background_risk={mtplx_background['risk']} "
                 f"mtplx_background_reasons={mtplx_background['reasons']} "
                 f"mtplx_roles={mtplx_background['roles']} "
-                f"mtplx_text_chars={mtplx_background['text_chars']}",
+                f"mtplx_text_chars={mtplx_background['text_chars']} "
+                f"prefix_hash={cache_candidate['prefix_hash']} "
+                f"prefix_json_chars={cache_candidate['prefix_json_chars']} "
+                f"estimated_full_prompt_tokens={cache_candidate['estimated_full_prompt_tokens']} "
+                f"context_pressure={cache_candidate['context_pressure']} "
+                f"tail_json_chars={cache_candidate['tail_json_chars']} "
+                f"tools_hash={cache_candidate['tools_hash']}",
                 request_id=request_id,
             )
-            if stream_requested and CONFIG.stream_mode == "direct":
+            if stream_requested and proxy_web_search_active:
+                stream_proxy_server_tool_loop_to_anthropic(
+                    self,
+                    request,
+                    payload,
+                    requested_model=requested_model,
+                    tool_schemas=schemas,
+                    request_id=request_id,
+                    request_kind=request_kind,
+                )
+            elif stream_requested and CONFIG.stream_mode == "direct":
                 stream_openai_to_anthropic(
                     self,
                     request,
@@ -2295,8 +3636,9 @@ class Handler(BaseHTTPRequestHandler):
                     request_kind=request_kind,
                 )
             else:
-                upstream = call_openai_chat(
+                upstream, server_tool_events = call_openai_chat_with_proxy_server_tools(
                     request,
+                    payload,
                     request_id=request_id,
                     request_kind=request_kind,
                 )
@@ -2304,6 +3646,8 @@ class Handler(BaseHTTPRequestHandler):
                     upstream,
                     requested_model=requested_model,
                     tool_schemas=schemas,
+                    server_tool_events=server_tool_events,
+                    request_id=request_id,
                 )
                 if stream_requested:
                     stream_anthropic(self, message, request_id=request_id)
@@ -2420,32 +3764,62 @@ def main() -> int:
         help="Optional JSONL path for redacted offered-tool schema inventories.",
     )
     parser.add_argument(
+        "--request-shape-log-path",
+        default=CONFIG.request_shape_log_path,
+        help=(
+            "Optional JSONL path for redacted per-request size breakdowns. "
+            "Does not include prompt text, tool arguments, or tool results."
+        ),
+    )
+    parser.add_argument(
+        "--raw-request-capture-dir",
+        default=CONFIG.raw_request_capture_dir,
+        help=(
+            "Optional private directory for raw Anthropic/OpenAI request captures. "
+            "Off by default; captured files can contain prompts, tool arguments, "
+            "tool results, and proprietary app instructions."
+        ),
+    )
+    parser.add_argument(
         "--harness-tools",
         default=",".join(CONFIG.harness_tools),
         help="Comma-separated structural tools that identify reviewer/harness requests.",
     )
     parser.add_argument(
-        "--harness-tool-allowlist",
-        default=",".join(CONFIG.harness_tool_allowlist),
-        help=(
-            "Optional comma-separated tool names to forward for harness/reviewer "
-            "requests. Use '*' to forward every offered reviewer tool."
-        ),
-    )
-    parser.add_argument(
-        "--harness-force-submit-after-tool-results",
-        type=int,
-        default=CONFIG.harness_force_submit_after_tool_results,
-        help=(
-            "When >0, reviewer/harness requests that have already completed this "
-            "many non-harness tool results are closed out by forwarding only the "
-            "harness submit tool."
-        ),
-    )
-    parser.add_argument(
         "--claude-science-compat",
         default="1" if CONFIG.claude_science_compat else "0",
         help="Emit Claude Science execution-compatible tool_use metadata.",
+    )
+    parser.add_argument(
+        "--server-web-search",
+        default=CONFIG.server_web_search,
+        choices=("off", "tavily", "firecrawl"),
+        help=(
+            "Execute Anthropic hosted web_search server tools inside the proxy. "
+            "When off, hosted server tools are omitted from OpenAI function forwarding."
+        ),
+    )
+    parser.add_argument(
+        "--server-web-search-max-results",
+        type=int,
+        default=CONFIG.server_web_search_max_results,
+        help="Maximum results returned for each proxy-owned web search.",
+    )
+    parser.add_argument(
+        "--server-web-search-max-uses",
+        type=int,
+        default=CONFIG.server_web_search_max_uses,
+        help="Maximum proxy-owned web searches per Anthropic request.",
+    )
+    parser.add_argument(
+        "--tavily-base-url",
+        default=CONFIG.tavily_base_url,
+        help="Tavily API base URL.",
+    )
+    parser.add_argument(
+        "--firecrawl-base-url",
+        default=CONFIG.firecrawl_base_url,
+        help="Firecrawl API base URL.",
     )
     parser.add_argument(
         "--mtplx-avoid-background-bypass",
@@ -2484,6 +3858,7 @@ def main() -> int:
 
     CONFIG.upstream_base = args.upstream_base.rstrip("/")
     CONFIG.upstream_model = args.upstream_model
+    CONFIG.upstream_api_key = DEFAULT_UPSTREAM_API_KEY
     CONFIG.provider_name = args.provider_name.strip() or infer_provider_name(CONFIG.upstream_base)
     CONFIG.timeout = args.timeout
     CONFIG.max_tokens_cap = args.max_tokens_cap
@@ -2498,13 +3873,15 @@ def main() -> int:
     CONFIG.parse_text_tool_calls = parse_bool(args.parse_text_tool_calls)
     CONFIG.strip_thinking_text = parse_bool(args.strip_thinking_text)
     CONFIG.schema_log_path = args.schema_log_path
+    CONFIG.request_shape_log_path = args.request_shape_log_path
+    CONFIG.raw_request_capture_dir = args.raw_request_capture_dir
     CONFIG.harness_tools = parse_csv(args.harness_tools)
-    CONFIG.harness_tool_allowlist = parse_csv(args.harness_tool_allowlist)
-    CONFIG.harness_force_submit_after_tool_results = max(
-        0,
-        args.harness_force_submit_after_tool_results,
-    )
     CONFIG.claude_science_compat = parse_bool(args.claude_science_compat)
+    CONFIG.server_web_search = parse_server_web_search(args.server_web_search)
+    CONFIG.server_web_search_max_results = max(1, args.server_web_search_max_results)
+    CONFIG.server_web_search_max_uses = max(1, args.server_web_search_max_uses)
+    CONFIG.tavily_base_url = args.tavily_base_url.rstrip("/")
+    CONFIG.firecrawl_base_url = args.firecrawl_base_url.rstrip("/")
     CONFIG.mtplx_avoid_background_bypass = parse_bool(args.mtplx_avoid_background_bypass)
     CONFIG.mtplx_background_max_tokens = args.mtplx_background_max_tokens
     CONFIG.mtplx_background_no_history_max_chars = args.mtplx_background_no_history_max_chars
@@ -2525,14 +3902,16 @@ def main() -> int:
         f"tool_mode={CONFIG.tool_mode}; "
         f"tool_validation={CONFIG.tool_validation}; "
         f"tool_repair={CONFIG.tool_repair}; "
+        f"server_web_search={CONFIG.server_web_search}; "
+        f"server_web_search_max_results={CONFIG.server_web_search_max_results}; "
+        f"server_web_search_max_uses={CONFIG.server_web_search_max_uses}; "
         f"force_mentioned_tool={CONFIG.force_mentioned_tool}; "
         f"parse_text_tool_calls={CONFIG.parse_text_tool_calls}; "
         f"strip_thinking_text={CONFIG.strip_thinking_text}; "
-        f"schema_log_path={CONFIG.schema_log_path or '<disabled>'}; "
+        f"schema_log_path={redacted_path_setting(CONFIG.schema_log_path) or '<disabled>'}; "
+        f"request_shape_log_path={redacted_path_setting(CONFIG.request_shape_log_path) or '<disabled>'}; "
+        f"raw_request_capture_dir={redacted_path_setting(CONFIG.raw_request_capture_dir) or '<disabled>'}; "
         f"harness_tools={CONFIG.harness_tools}; "
-        f"harness_tool_allowlist={CONFIG.harness_tool_allowlist or '<all reviewer tools>'}; "
-        "harness_force_submit_after_tool_results="
-        f"{CONFIG.harness_force_submit_after_tool_results}; "
         f"claude_science_compat={CONFIG.claude_science_compat}; "
         f"mtplx_avoid_background_bypass={CONFIG.mtplx_avoid_background_bypass}; "
         f"mtplx_background_max_tokens={CONFIG.mtplx_background_max_tokens}; "
