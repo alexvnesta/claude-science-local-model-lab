@@ -376,6 +376,17 @@ Expected:
   follow-ups. Caveat: OpenRouter intermittently returned upstream 429s for the
   free Gemma endpoint, and the generated mechanism text in the PNG was clipped;
   this proves the loop, not publication-quality figure layout.
+- OpenRouter-free routing retest on 2026-07-02:
+  `google/gemma-4-26b-a4b-it:free` returned upstream 429 under the real Claude
+  Science foreground request despite passing a short proxy smoke. The proxy was
+  then switched to `nvidia/nemotron-3-nano-30b-a3b:free`; `/healthz` and
+  `/v1/models` confirmed Nemotron routing even though the existing UI session
+  still displayed a stale Gemma picker label. Nemotron successfully invoked
+  Firecrawl search through the proxy and triggered the missing
+  `human_description` repair for `search_skills`, but it kept issuing repeated
+  search/tool-loop turns instead of finalizing the BRCA TE-expression feasibility
+  answer. The proxy now has a conversation-level web-search budget guard to keep
+  that failure mode bounded.
 - Local Qwen refined artifact proof:
   `55f1c397-47ea-4d9a-adda-48cf357fc4c4` ran against
   `mtplx-qwen36-27b-optimized-quality`. The foreground frame

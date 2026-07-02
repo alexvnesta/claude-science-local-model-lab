@@ -116,6 +116,16 @@ Observed Qwen behavior:
   app to reject the returned call as `Tool 'web_search' not found on agent
   'OPERON'`. Firecrawl's hosted free tier is credit-based; search consumes
   credits per result batch.
+- `PROXY_SERVER_WEB_SEARCH_MAX_USES` limits searches inside one Anthropic
+  request. `PROXY_SERVER_WEB_SEARCH_CONVERSATION_MAX_USES` limits searches since
+  the latest real user message, so weaker local/free models cannot keep
+  re-entering fresh search loops after Claude Science feeds prior search results
+  back into the session. Set it to `0` only for manual debugging where repeated
+  follow-up searches are intentional.
+- Existing Claude Science sessions can display a stale model-picker label after
+  the proxy is restarted with a different advertised model. Treat `/healthz` and
+  `/v1/models` as routing truth; those JSON endpoints are sent with no-store
+  cache headers.
 - Set `PROXY_STRIP_THINKING_TEXT=1` only when you intentionally want to hide
   leading Qwen-style `<think>...</think>` blocks in a UI demo.
 
@@ -194,6 +204,15 @@ requests include a much larger system/tool context than the smoke script, and
 free OpenRouter routes can be capacity-limited. For a public UI GIF, use MTPLX
 or a paid/private-capacity OpenRouter route unless the free route is currently
 healthy under the real app prompt.
+
+Observed OpenRouter-free behavior on 2026-07-02: `google/gemma-4-26b-a4b-it:free`
+passed a short provider smoke but the full Claude Science foreground request hit
+an upstream Google AI Studio 429. `nvidia/nemotron-3-nano-30b-a3b:free` passed a
+short provider smoke and exercised Firecrawl web search through the proxy. Before
+the conversation-level search guard, Nemotron kept re-entering repeated search
+turns on the BRCA TE-expression feasibility prompt. After the guard, the same
+route stopped at three Firecrawl searches and returned a bounded `STOP` answer.
+Treat free-route success as per-model and per-moment, not a durable guarantee.
 
 Official references:
 

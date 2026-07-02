@@ -247,6 +247,19 @@ class FakeOpenAIHandler(BaseHTTPRequestHandler):
                     },
                 )
                 return
+            if "extra metadata" in prompt:
+                raw_web_search_call = (
+                    "<call_tool name=\"web_search\">\n"
+                    "<parameter=human_description>Searching again for a public source</parameter>\n"
+                    "<parameter=query>proxy owned raw web search extra metadata</parameter>\n"
+                    "</call_tool>"
+                )
+            else:
+                raw_web_search_call = (
+                    "<call_tool name=\"web_search\">\n"
+                    "<parameter=query>proxy owned raw web search</parameter>\n"
+                    "</call_tool>"
+                )
             self._json(
                 200,
                 {
@@ -254,11 +267,7 @@ class FakeOpenAIHandler(BaseHTTPRequestHandler):
                         {
                             "message": {
                                 "role": "assistant",
-                                "content": (
-                                    "<call_tool name=\"web_search\">\n"
-                                    "<parameter=query>proxy owned raw web search</parameter>\n"
-                                    "</call_tool>"
-                                ),
+                                "content": raw_web_search_call,
                             },
                             "finish_reason": "stop",
                         }
@@ -547,6 +556,38 @@ class FakeOpenAIHandler(BaseHTTPRequestHandler):
                             "message": {
                                 "role": "assistant",
                                 "content": json.dumps({"tool_names": names}),
+                            },
+                            "finish_reason": "stop",
+                        }
+                    ],
+                    "usage": {"prompt_tokens": 4, "completion_tokens": 2},
+                },
+            )
+            return
+        if not payload.get("stream") and "check exhausted web search budget" in prompt:
+            names = [
+                item.get("function", {}).get("name")
+                for item in payload.get("tools") or []
+                if isinstance(item, dict)
+            ]
+            system_messages = [
+                message.get("content")
+                for message in messages
+                if isinstance(message, dict) and message.get("role") == "system"
+            ]
+            self._json(
+                200,
+                {
+                    "choices": [
+                        {
+                            "message": {
+                                "role": "assistant",
+                                "content": json.dumps(
+                                    {
+                                        "tool_names": names,
+                                        "system_messages": system_messages,
+                                    }
+                                ),
                             },
                             "finish_reason": "stop",
                         }
@@ -1621,13 +1662,18 @@ def post_json(url: str, payload: dict[str, Any]) -> str:
 
 
 def get_json(url: str) -> dict[str, Any]:
+    payload, _headers = get_json_with_headers(url)
+    return payload
+
+
+def get_json_with_headers(url: str) -> tuple[dict[str, Any], Any]:
     request = urllib.request.Request(
         url,
         headers={"anthropic-version": "2023-06-01"},
         method="GET",
     )
     with urllib.request.urlopen(request, timeout=10) as response:
-        return json.loads(response.read().decode("utf-8"))
+        return json.loads(response.read().decode("utf-8")), response.headers
 
 
 def parse_sse(raw: str) -> list[tuple[str, dict[str, Any]]]:
@@ -2274,7 +2320,70 @@ def assert_proxy_owned_server_web_search(
     health = get_json(f"http://127.0.0.1:{proxy_port}/healthz")
     assert health["server_web_search"]["mode"] == "tavily", health
     assert health["server_web_search"]["tavily_key_set"] is True, health
+    assert health["server_web_search"]["conversation_max_uses"] == 2, health
     assert health["metrics"]["messages_by_stream_mode"].get("server_tool_loop", 0) >= 1, health
+
+
+def assert_web_search_conversation_budget_exhausted(proxy_port: int) -> None:
+    raw = post_json(
+        f"http://127.0.0.1:{proxy_port}/v1/messages",
+        {
+            "model": "claude-opus-4-8",
+            "max_tokens": 64,
+            "tools": [
+                {**anthropic_server_web_search_tool(), "max_uses": 2},
+                bash_tool(),
+            ],
+            "messages": [
+                {"role": "user", "content": "check exhausted web search budget"},
+                {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "server_tool_use",
+                            "id": "srvtoolu_one",
+                            "name": "web_search",
+                            "input": {"query": "first query"},
+                        },
+                        {
+                            "type": "web_search_tool_result",
+                            "tool_use_id": "srvtoolu_one",
+                            "content": [{"title": "One", "url": "https://example.com/one"}],
+                        },
+                        {
+                            "type": "server_tool_use",
+                            "id": "srvtoolu_two",
+                            "name": "web_search",
+                            "input": {"query": "second query"},
+                        },
+                        {
+                            "type": "web_search_tool_result",
+                            "tool_use_id": "srvtoolu_two",
+                            "content": [{"title": "Two", "url": "https://example.com/two"}],
+                        },
+                    ],
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": "toolu_other",
+                            "content": '{"ok":true}',
+                        }
+                    ],
+                },
+            ],
+        },
+    )
+    payload = json.loads(raw)
+    upstream_seen = json.loads(payload["content"][0]["text"])
+    assert upstream_seen["tool_names"] == ["bash"], upstream_seen
+    assert any(
+        "web_search budget" in str(message)
+        and "Do not call web_search again" in str(message)
+        for message in upstream_seen["system_messages"]
+    ), upstream_seen
 
 
 def assert_proxy_owned_raw_server_web_search(proxy_port: int) -> None:
@@ -2315,6 +2424,45 @@ def assert_proxy_owned_raw_server_web_search(proxy_port: int) -> None:
     assert "cannot call that tool from this local profile" not in stream_text(events), events
     health = get_json(f"http://127.0.0.1:{proxy_port}/healthz")
     assert health["metrics"]["messages_by_stream_mode"].get("server_tool_loop", 0) >= 1, health
+
+
+def assert_proxy_owned_raw_server_web_search_extra_metadata(
+    proxy_port: int,
+    fake_server: ThreadingHTTPServer,
+    provider_payload_key: str,
+) -> None:
+    raw = post_json(
+        f"http://127.0.0.1:{proxy_port}/v1/messages",
+        {
+            "model": "claude-opus-4-8",
+            "stream": True,
+            "max_tokens": 128,
+            "tool_choice": {"type": "tool", "name": "web_search"},
+            "tools": [
+                {
+                    **anthropic_server_web_search_tool(),
+                    "max_uses": 2,
+                    "allowed_domains": ["example.com"],
+                }
+            ],
+            "messages": [
+                {"role": "user", "content": "proxy owned raw web search extra metadata"}
+            ],
+        },
+    )
+    events = parse_sse(raw)
+    starts = [
+        event.get("content_block", {})
+        for name, event in events
+        if name == "content_block_start"
+    ]
+    assert any(block.get("type") == "server_tool_use" for block in starts), events
+    assert any(block.get("type") == "web_search_tool_result" for block in starts), events
+    text = stream_text(events)
+    assert "Raw web search bridge works" in text, text
+    assert "cannot call that tool from this local profile" not in text, events
+    search_payload = fake_request_payload(fake_server, provider_payload_key)
+    assert search_payload["query"] == "proxy owned raw web search extra metadata", search_payload
 
 
 def assert_proxy_owned_server_web_search_stream_heartbeat(proxy_port: int) -> None:
@@ -2615,6 +2763,29 @@ def assert_mentioned_tool_forced(proxy_port: int) -> None:
         "type": "function",
         "function": {"name": "skill"},
     }, upstream_seen
+
+
+def assert_negated_mentioned_tool_not_forced(proxy_port: int) -> None:
+    raw = post_json(
+        f"http://127.0.0.1:{proxy_port}/v1/messages",
+        {
+            "model": "claude-opus-4-8",
+            "max_tokens": 64,
+            "tools": [search_skills_tool(), skill_tool()],
+            "messages": [
+                {
+                    "role": "user",
+                    "content": (
+                        "check mentioned tool choice: do not use search_skills; "
+                        "answer directly"
+                    ),
+                }
+            ],
+        },
+    )
+    payload = json.loads(raw)
+    upstream_seen = json.loads(payload["content"][0]["text"])
+    assert upstream_seen["tool_choice"] is None, upstream_seen
 
 
 def assert_natural_call_tool_forced(proxy_port: int) -> None:
@@ -2996,13 +3167,17 @@ def assert_client_cancellation_does_not_hang(proxy_port: int) -> None:
 
 
 def assert_models_endpoint(proxy_port: int) -> None:
-    payload = get_json(f"http://127.0.0.1:{proxy_port}/v1/models?limit=1000")
+    payload, headers = get_json_with_headers(
+        f"http://127.0.0.1:{proxy_port}/v1/models?limit=1000"
+    )
     ids = [item["id"] for item in payload["data"]]
     assert ids == ["claude-opus-4-8", "fake-model"], payload
     assert payload["data"][0]["display_name"] == "Claude Opus 4.8", payload
     assert payload["has_more"] is False, payload
     assert payload["first_id"] == "claude-opus-4-8", payload
     assert payload["last_id"] == "fake-model", payload
+    assert headers["Cache-Control"] == "no-store", dict(headers)
+    assert headers["Pragma"] == "no-cache", dict(headers)
 
     model = get_json(f"http://127.0.0.1:{proxy_port}/v1/models/claude-opus-4-8")
     assert model["id"] == "claude-opus-4-8", model
@@ -3426,7 +3601,13 @@ def main() -> int:
     try:
         wait_for_proxy(web_search_proxy_port, web_search_proc)
         assert_proxy_owned_server_web_search(web_search_proxy_port, fake_server)
+        assert_web_search_conversation_budget_exhausted(web_search_proxy_port)
         assert_proxy_owned_raw_server_web_search(web_search_proxy_port)
+        assert_proxy_owned_raw_server_web_search_extra_metadata(
+            web_search_proxy_port,
+            fake_server,
+            "tavily_search",
+        )
         assert_proxy_owned_server_web_search_stream_heartbeat(web_search_proxy_port)
         assert_server_tool_loop_retry_reuses_finished_job(web_search_proxy_port, fake_server)
         assert_server_loop_raw_skill_text_tool_repaired(web_search_proxy_port)
@@ -3458,6 +3639,11 @@ def main() -> int:
     try:
         wait_for_proxy(firecrawl_proxy_port, firecrawl_proc)
         assert_proxy_owned_server_web_search_firecrawl(firecrawl_proxy_port, fake_server)
+        assert_proxy_owned_raw_server_web_search_extra_metadata(
+            firecrawl_proxy_port,
+            fake_server,
+            "firecrawl_search",
+        )
     finally:
         firecrawl_proc.terminate()
         try:
@@ -3517,6 +3703,7 @@ def main() -> int:
     try:
         wait_for_proxy(force_proxy_port, force_proc)
         assert_mentioned_tool_forced(force_proxy_port)
+        assert_negated_mentioned_tool_not_forced(force_proxy_port)
         assert_natural_call_tool_forced(force_proxy_port)
         assert_deferred_python_tool_forced(force_proxy_port)
     finally:

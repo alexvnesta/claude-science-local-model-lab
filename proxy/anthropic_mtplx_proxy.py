@@ -101,6 +101,10 @@ DEFAULT_CLAUDE_SCIENCE_COMPAT = _env("PROXY_CLAUDE_SCIENCE_COMPAT", "0")
 DEFAULT_SERVER_WEB_SEARCH = _env("PROXY_SERVER_WEB_SEARCH", "off")
 DEFAULT_SERVER_WEB_SEARCH_MAX_RESULTS = int(_env("PROXY_SERVER_WEB_SEARCH_MAX_RESULTS", "5"))
 DEFAULT_SERVER_WEB_SEARCH_MAX_USES = int(_env("PROXY_SERVER_WEB_SEARCH_MAX_USES", "3"))
+DEFAULT_SERVER_WEB_SEARCH_CONVERSATION_MAX_USES = _env(
+    "PROXY_SERVER_WEB_SEARCH_CONVERSATION_MAX_USES",
+    "",
+)
 DEFAULT_TAVILY_API_KEY = _env("TAVILY_API_KEY", "")
 DEFAULT_TAVILY_BASE_URL = _env("TAVILY_BASE_URL", "https://api.tavily.com")
 DEFAULT_FIRECRAWL_API_KEY = _env("FIRECRAWL_API_KEY", "")
@@ -171,6 +175,7 @@ class ProxyConfig:
         server_web_search: str,
         server_web_search_max_results: int,
         server_web_search_max_uses: int,
+        server_web_search_conversation_max_uses: int,
         tavily_api_key: str,
         tavily_base_url: str,
         firecrawl_api_key: str,
@@ -205,6 +210,9 @@ class ProxyConfig:
         self.server_web_search = server_web_search
         self.server_web_search_max_results = server_web_search_max_results
         self.server_web_search_max_uses = server_web_search_max_uses
+        self.server_web_search_conversation_max_uses = (
+            server_web_search_conversation_max_uses
+        )
         self.tavily_api_key = tavily_api_key
         self.tavily_base_url = tavily_base_url.rstrip("/")
         self.firecrawl_api_key = firecrawl_api_key
@@ -240,6 +248,7 @@ CONFIG = ProxyConfig(
     False,
     "off",
     5,
+    3,
     3,
     "",
     "https://api.tavily.com",
@@ -356,6 +365,12 @@ CONFIG.claude_science_compat = parse_bool(DEFAULT_CLAUDE_SCIENCE_COMPAT)
 CONFIG.server_web_search = parse_server_web_search(DEFAULT_SERVER_WEB_SEARCH)
 CONFIG.server_web_search_max_results = max(1, DEFAULT_SERVER_WEB_SEARCH_MAX_RESULTS)
 CONFIG.server_web_search_max_uses = max(1, DEFAULT_SERVER_WEB_SEARCH_MAX_USES)
+CONFIG.server_web_search_conversation_max_uses = max(
+    0,
+    int(DEFAULT_SERVER_WEB_SEARCH_CONVERSATION_MAX_USES)
+    if DEFAULT_SERVER_WEB_SEARCH_CONVERSATION_MAX_USES
+    else DEFAULT_SERVER_WEB_SEARCH_MAX_USES,
+)
 CONFIG.tavily_api_key = DEFAULT_TAVILY_API_KEY
 CONFIG.tavily_base_url = DEFAULT_TAVILY_BASE_URL.rstrip("/")
 CONFIG.firecrawl_api_key = DEFAULT_FIRECRAWL_API_KEY
@@ -514,6 +529,39 @@ def completed_harness_tool_names(payload: dict[str, Any]) -> set[str]:
     return completed_names
 
 
+def server_web_search_results_since_latest_user_text(payload: dict[str, Any]) -> int:
+    messages = payload.get("messages")
+    if not isinstance(messages, list):
+        return 0
+
+    start_index = 0
+    for index, message in enumerate(messages):
+        if not isinstance(message, dict) or message.get("role") != "user":
+            continue
+        if user_text_without_tool_results(message).strip():
+            start_index = index
+
+    count = 0
+    for message in messages[start_index:]:
+        if not isinstance(message, dict):
+            continue
+        content = message.get("content")
+        if not isinstance(content, list):
+            continue
+        for block in content:
+            if isinstance(block, dict) and block.get("type") == "web_search_tool_result":
+                count += 1
+    return count
+
+
+def server_web_search_remaining_uses(payload: dict[str, Any]) -> int | None:
+    cap = CONFIG.server_web_search_conversation_max_uses
+    if cap <= 0:
+        return None
+    used = server_web_search_results_since_latest_user_text(payload)
+    return max(0, cap - used)
+
+
 def openai_message_roles(request: dict[str, Any]) -> list[str]:
     roles: list[str] = []
     for message in request.get("messages") or []:
@@ -610,11 +658,36 @@ def assistant_message_from_blocks(message: dict[str, Any]) -> dict[str, Any]:
 def anthropic_to_openai(payload: dict[str, Any], stream: bool = False) -> dict[str, Any]:
     messages: list[dict[str, Any]] = []
     payload_tool_names = tool_names(payload)
+    web_search_spec = anthropic_web_search_spec(payload)
 
     system = payload.get("system")
     system_text = block_text(system)
     if system_text:
         messages.append({"role": "system", "content": system_text})
+    server_web_search_offered = any(
+        isinstance(tool, dict) and is_anthropic_web_search_tool(tool)
+        for tool in payload.get("tools") or []
+    )
+    remaining_web_search_uses = server_web_search_remaining_uses(payload)
+    if (
+        CONFIG.tool_mode == "pass"
+        and CONFIG.server_web_search != "off"
+        and server_web_search_offered
+        and remaining_web_search_uses == 0
+    ):
+        used = server_web_search_results_since_latest_user_text(payload)
+        messages.append(
+            {
+                "role": "system",
+                "content": (
+                    "Local proxy note: the web_search budget for this user task is "
+                    f"exhausted ({used}/{CONFIG.server_web_search_conversation_max_uses}). "
+                    "Do not call web_search again. Answer now from the search results "
+                    "already returned, or state the missing data needed."
+                ),
+            }
+        )
+        log("not exposing proxy web_search; conversation search budget exhausted")
     if CONFIG.tool_mode == "drop" and payload_tool_names and "submit_output" not in payload_tool_names:
         messages.append(
             {
@@ -671,7 +744,7 @@ def anthropic_to_openai(payload: dict[str, Any], stream: bool = False) -> dict[s
                 },
             }
         )
-    if CONFIG.tool_mode == "pass" and anthropic_web_search_spec(payload):
+    if CONFIG.tool_mode == "pass" and web_search_spec:
         tools.append(proxy_web_search_openai_tool())
 
     requested_max_tokens = int(payload.get("max_tokens") or 1024)
@@ -763,10 +836,23 @@ def forced_mentioned_tool(payload: dict[str, Any], forwarded_tool_names: list[st
             match = re.search(pattern, text)
             if not match:
                 continue
+            if is_negated_tool_instruction(text, match.start()):
+                continue
             candidate = (match.start(), -len(name), name)
             if best is None or candidate < best:
                 best = candidate
     return best[2] if best else None
+
+
+def is_negated_tool_instruction(text: str, match_start: int) -> bool:
+    prefix = text[max(0, match_start - 48) : match_start]
+    return bool(
+        re.search(
+            r"(?:\bdo\s+not|\bdon't|\bdont|\bnever|\bavoid|\bwithout|\bnot)\s+"
+            r"(?:the\s+)?$",
+            prefix,
+        )
+    )
 
 
 def tool_names(payload: dict[str, Any]) -> list[str]:
@@ -846,6 +932,11 @@ def anthropic_web_search_spec(payload: dict[str, Any]) -> dict[str, Any] | None:
         max_uses = tool.get("max_uses")
         if not isinstance(max_uses, int) or max_uses < 1:
             max_uses = CONFIG.server_web_search_max_uses
+        remaining_uses = server_web_search_remaining_uses(payload)
+        if remaining_uses == 0:
+            return None
+        if isinstance(remaining_uses, int):
+            max_uses = min(max_uses, remaining_uses)
         allowed_domains = clean_domain_list(tool.get("allowed_domains"))
         blocked_domains = (
             [] if allowed_domains else clean_domain_list(tool.get("blocked_domains"))
@@ -2433,7 +2524,10 @@ def proxy_web_search_calls(
     if calls:
         return calls
 
-    candidate = parse_proxy_web_search_text_call(message.get("content"))
+    candidate = normalize_proxy_web_search_tool_use(
+        parse_proxy_web_search_text_call(message.get("content")),
+        request_id=request_id,
+    )
     candidate = validate_tool_use_block(
         candidate,
         {PROXY_WEB_SEARCH_TOOL_NAME: PROXY_WEB_SEARCH_TOOL_SCHEMA},
@@ -2457,6 +2551,35 @@ def proxy_web_search_calls(
         }
     )
     return calls
+
+
+def normalize_proxy_web_search_tool_use(
+    candidate: dict[str, Any] | None,
+    *,
+    request_id: str | None = None,
+) -> dict[str, Any] | None:
+    if not isinstance(candidate, dict) or candidate.get("name") != PROXY_WEB_SEARCH_TOOL_NAME:
+        return None
+    arguments = candidate.get("input")
+    if not isinstance(arguments, dict):
+        return None
+    query = arguments.get("query")
+    if not isinstance(query, str) or not query.strip():
+        for fallback_key in ("human_description", "search_query", "q"):
+            fallback = arguments.get(fallback_key)
+            if isinstance(fallback, str) and fallback.strip():
+                query = fallback
+                break
+    if not isinstance(query, str) or not query.strip():
+        return None
+    normalized = dict(candidate)
+    normalized["input"] = {"query": query.strip()}
+    if arguments != normalized["input"]:
+        log(
+            "repaired proxy-owned web_search raw text call by keeping query only",
+            request_id=request_id,
+        )
+    return normalized
 
 
 def parse_proxy_web_search_text_call(content: Any) -> dict[str, Any] | None:
@@ -2570,6 +2693,7 @@ def server_tool_loop_job_key(
             "mode": CONFIG.server_web_search,
             "max_results": CONFIG.server_web_search_max_results,
             "max_uses": CONFIG.server_web_search_max_uses,
+            "conversation_max_uses": CONFIG.server_web_search_conversation_max_uses,
             "tavily_base_url": CONFIG.tavily_base_url,
             "firecrawl_base_url": CONFIG.firecrawl_base_url,
         },
@@ -3453,6 +3577,9 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Pragma", "no-cache")
+        self.send_header("Expires", "0")
         if request_id:
             self.send_header("X-Request-Id", request_id)
         self.end_headers()
@@ -3505,6 +3632,7 @@ class Handler(BaseHTTPRequestHandler):
                         "mode": CONFIG.server_web_search,
                         "max_results": CONFIG.server_web_search_max_results,
                         "max_uses": CONFIG.server_web_search_max_uses,
+                        "conversation_max_uses": CONFIG.server_web_search_conversation_max_uses,
                         "tavily_key_set": bool(CONFIG.tavily_api_key),
                         "firecrawl_key_set": bool(CONFIG.firecrawl_api_key),
                     },
@@ -3812,6 +3940,19 @@ def main() -> int:
         help="Maximum proxy-owned web searches per Anthropic request.",
     )
     parser.add_argument(
+        "--server-web-search-conversation-max-uses",
+        type=int,
+        default=(
+            int(DEFAULT_SERVER_WEB_SEARCH_CONVERSATION_MAX_USES)
+            if DEFAULT_SERVER_WEB_SEARCH_CONVERSATION_MAX_USES
+            else None
+        ),
+        help=(
+            "Maximum proxy-owned web searches since the latest real user message; "
+            "0 disables this cross-request guard. Defaults to --server-web-search-max-uses."
+        ),
+    )
+    parser.add_argument(
         "--tavily-base-url",
         default=CONFIG.tavily_base_url,
         help="Tavily API base URL.",
@@ -3880,6 +4021,12 @@ def main() -> int:
     CONFIG.server_web_search = parse_server_web_search(args.server_web_search)
     CONFIG.server_web_search_max_results = max(1, args.server_web_search_max_results)
     CONFIG.server_web_search_max_uses = max(1, args.server_web_search_max_uses)
+    CONFIG.server_web_search_conversation_max_uses = max(
+        0,
+        args.server_web_search_conversation_max_uses
+        if args.server_web_search_conversation_max_uses is not None
+        else CONFIG.server_web_search_max_uses,
+    )
     CONFIG.tavily_base_url = args.tavily_base_url.rstrip("/")
     CONFIG.firecrawl_base_url = args.firecrawl_base_url.rstrip("/")
     CONFIG.mtplx_avoid_background_bypass = parse_bool(args.mtplx_avoid_background_bypass)
@@ -3905,6 +4052,7 @@ def main() -> int:
         f"server_web_search={CONFIG.server_web_search}; "
         f"server_web_search_max_results={CONFIG.server_web_search_max_results}; "
         f"server_web_search_max_uses={CONFIG.server_web_search_max_uses}; "
+        f"server_web_search_conversation_max_uses={CONFIG.server_web_search_conversation_max_uses}; "
         f"force_mentioned_tool={CONFIG.force_mentioned_tool}; "
         f"parse_text_tool_calls={CONFIG.parse_text_tool_calls}; "
         f"strip_thinking_text={CONFIG.strip_thinking_text}; "
