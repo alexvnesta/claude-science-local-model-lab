@@ -135,6 +135,16 @@ tool turns, and needs reviewer-loop guardrails.
     official Claude Science, isolated Claude Science, proxy, and upstream model
     ports are still listening, plus a clean recovery recipe.
 
+14. Add domain recipes where discovery repeatedly fails.
+
+    The BRCA TE quick look now has a reproducible notebook and public data
+    route, but free/local models did not cleanly rediscover it from a generic
+    prompt. Add a Claude Science skill or equivalent recipe for this class of
+    query only when the recipe is backed by concrete source URLs and a runnable
+    notebook. For this case, the recipe should name REdiscoverTEdata as the
+    precomputed TCGA TE expression matrix source and UCSC Xena
+    `PAM50Call_RNAseq` as the BRCA subtype label source.
+
 ## Cleanup Principles
 
 - Keep `_local/` as the only place for app copies, logs, cookies, databases,

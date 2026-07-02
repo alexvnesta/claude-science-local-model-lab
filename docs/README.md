@@ -15,6 +15,8 @@ when you need a more specific reference.
   proving a live run, smoke testing, permissions, reviewers, and artifacts.
 - [`evidence-bundle.md`](evidence-bundle.md): public-safe summary of the TP53
   demo evidence without private prompts, logs, or account state.
+- [`brca-te-subtype-analysis.md`](brca-te-subtype-analysis.md): reproducible
+  public-data route for TCGA-BRCA TE expression by PAM50 subtype.
 
 ## Reference Docs
 

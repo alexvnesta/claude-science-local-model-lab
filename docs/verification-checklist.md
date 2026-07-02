@@ -416,6 +416,17 @@ Expected:
   `063795d2-56a4-4776-84e6-afdd3970f05b` completed with `findings: []` and a
   resolved prior disposition. Caveat: this used a pinned Xena URL and therefore
   does not prove open-ended dataset discovery.
+- Local Qwen BRCA TE-discovery timeout:
+  `c0bf3817-8015-422c-ac2b-088989a461c7` ran against
+  `mtplx-qwen36-27b-optimized-quality` with Firecrawl enabled. The proxy
+  request-shape log captured a real Claude Science foreground request with
+  `25` tools, estimated full prompt size around 31.7k tokens, and normal
+  context pressure. The proxy started the server-tool loop, the client
+  reconnected to the in-flight job, and the run failed when the upstream call
+  reached the configured 240 s timeout. The MTPLX log shows a relevant
+  REdiscoverTE search attempt and a late `READY`-like preview, but because the
+  answer was not delivered to Claude Science and appears to conflate Xena with
+  the TE matrix, this is not clean autonomous-discovery proof.
 
 ## 6.1 Streaming Caveat For Long Tool Calls
 

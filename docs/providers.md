@@ -88,6 +88,14 @@ Observed Qwen behavior:
   model turns for TSV, figure, Markdown, artifact save, final answer, and
   reviewer inspection. Treat this as a capability proof, not yet an ergonomic
   production default.
+- A fresh MTPLX/Qwen BRCA TE-discovery test on 2026-07-02 exposed the expected
+  app-pruned foreground tool surface (`25` tools in the request-shape log), but
+  failed when the upstream call hit the configured 240 s timeout. The MTPLX log
+  shows relevant search attempts, including REdiscoverTE, and a late
+  `READY`-like preview, but that preview was not delivered to Claude Science and
+  was not reliable enough to count as clean autonomous discovery. Use the
+  explicit BRCA TE notebook/recipe for this workflow until a fresh app-side proof
+  completes.
 - The MTPLX/Qwen profile still defaults to `PROXY_STREAM_MODE=buffered` because
   that is the known-good app path for short tool loops. Direct mode now has
   proxy-level heartbeat coverage and live Claude Science proof for several
@@ -211,8 +219,9 @@ an upstream Google AI Studio 429. `nvidia/nemotron-3-nano-30b-a3b:free` passed a
 short provider smoke and exercised Firecrawl web search through the proxy. Before
 the conversation-level search guard, Nemotron kept re-entering repeated search
 turns on the BRCA TE-expression feasibility prompt. After the guard, the same
-route stopped at three Firecrawl searches and returned a bounded `STOP` answer.
-Treat free-route success as per-model and per-moment, not a durable guarantee.
+route stopped at three Firecrawl searches and returned a bounded `STOP` answer
+without finding the REdiscoverTEdata + Xena route. Treat free-route success as
+per-model and per-moment, not a durable guarantee.
 
 Official references:
 

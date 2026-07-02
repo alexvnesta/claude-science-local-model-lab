@@ -208,6 +208,15 @@ The demo uses the public UCSC Xena TCGA-BRCA `HiSeqV2` expression matrix:
 
 <img src="docs/assets/tp53-notebook-source-2.png" alt="Notebook source for plotting TP53 expression and writing artifacts" width="900">
 
+Public source notebook for the BRCA TE subtype quick look:
+[`examples/brca_te_subtype_rediscovertre_analysis.ipynb`](examples/brca_te_subtype_rediscovertre_analysis.ipynb).
+It reuses the public REdiscoverTEdata TCGA intergenic TE matrix and joins it to
+UCSC Xena `PAM50Call_RNAseq` labels; see
+[`docs/brca-te-subtype-analysis.md`](docs/brca-te-subtype-analysis.md) for the
+data route, prerequisites, checksums, caveats, and interpretation.
+
+<img src="docs/assets/brca-te-subtype-heatmap-violin.png" alt="TCGA-BRCA TE expression by PAM50 subtype" width="900">
+
 For detailed evidence, caveats, and capture notes, see
 [`docs/evidence-bundle.md`](docs/evidence-bundle.md),
 [`docs/demo-capture.md`](docs/demo-capture.md), and
