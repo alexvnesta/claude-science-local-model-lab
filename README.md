@@ -145,6 +145,22 @@ Provider-only smoke tests are available without launching Claude Science:
 OPENROUTER_ENV_FILE=/path/to/ignored/.env ./scripts/smoke-openrouter.sh
 ```
 
+To let Chat Completions backends use Claude Science's hosted `web_search`
+server tool, opt in to a proxy-owned search bridge and keep secrets in ignored
+local env files:
+
+```bash
+cat > _local/proxy.env <<'EOF'
+FIRECRAWL_API_KEY=...
+PROXY_SERVER_WEB_SEARCH=firecrawl
+PROXY_SERVER_WEB_SEARCH_MAX_USES=3
+PROXY_SERVER_WEB_SEARCH_CONVERSATION_MAX_USES=3
+EOF
+```
+
+Set `PROXY_SERVER_WEB_SEARCH_CONVERSATION_MAX_USES=0` only for manual debugging
+where repeated search loops are intentional.
+
 Launch the isolated Claude Science copy:
 
 ```bash
