@@ -47,13 +47,28 @@ class FakeOpenAIHandler(BaseHTTPRequestHandler):
         self.end_headers()
         if initial_delay:
             time.sleep(initial_delay)
-        for chunk in chunks:
-            self.wfile.write(b"data: ")
-            self.wfile.write(json.dumps(chunk, separators=(",", ":")).encode("utf-8"))
-            self.wfile.write(b"\n\n")
+        try:
+            for chunk in chunks:
+                self.wfile.write(b"data: ")
+                self.wfile.write(json.dumps(chunk, separators=(",", ":")).encode("utf-8"))
+                self.wfile.write(b"\n\n")
+                self.wfile.flush()
+                time.sleep(delay)
+            self.wfile.write(b"data: [DONE]\n\n")
             self.wfile.flush()
-            time.sleep(delay)
-        self.wfile.write(b"data: [DONE]\n\n")
+        except (BrokenPipeError, ConnectionResetError, OSError) as exc:
+            if isinstance(exc, OSError) and exc.errno not in (errno.EPIPE, errno.ECONNRESET):
+                raise
+
+    def _sse_event(self, name: str, payload: dict[str, Any]) -> None:
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Cache-Control", "no-cache")
+        self.end_headers()
+        self.wfile.write(f"event: {name}\n".encode("utf-8"))
+        self.wfile.write(b"data: ")
+        self.wfile.write(json.dumps(payload, separators=(",", ":")).encode("utf-8"))
+        self.wfile.write(b"\n\n")
         self.wfile.flush()
 
     def do_GET(self) -> None:  # noqa: N802
@@ -866,6 +881,40 @@ class FakeOpenAIHandler(BaseHTTPRequestHandler):
             )
             return
 
+        if "long direct stream" in prompt:
+            chunks = [{"choices": [{"delta": {"role": "assistant"}}]}]
+            chunks.extend(
+                {"choices": [{"delta": {"content": f"chunk-{idx:03d} "}}]}
+                for idx in range(80)
+            )
+            chunks.append({"choices": [{"delta": {}, "finish_reason": "stop"}]})
+            self._sse(chunks, delay=0.001)
+            return
+
+        if "stream upstream error event" in prompt:
+            self._sse(
+                [
+                    {
+                        "error": {
+                            "type": "server_error",
+                            "message": "synthetic upstream stream error",
+                        }
+                    }
+                ],
+                delay=0.001,
+            )
+            return
+
+        if "stream upstream named error event" in prompt:
+            self._sse_event(
+                "error",
+                {
+                    "type": "error",
+                    "message": "synthetic named upstream stream error",
+                },
+            )
+            return
+
         if "call a tool" in prompt:
             self._sse(
                 [
@@ -907,6 +956,63 @@ class FakeOpenAIHandler(BaseHTTPRequestHandler):
             )
             return
 
+        if "call split streamed tool" in prompt:
+            self._sse(
+                [
+                    {"choices": [{"delta": {"role": "assistant"}}]},
+                    {
+                        "choices": [
+                            {
+                                "delta": {
+                                    "tool_calls": [
+                                        {
+                                            "index": 0,
+                                            "id": "call_split_1",
+                                            "type": "function",
+                                            "function": {
+                                                "name": "bash",
+                                                "arguments": "{\"com",
+                                            },
+                                        }
+                                    ]
+                                }
+                            }
+                        ]
+                    },
+                    {
+                        "choices": [
+                            {
+                                "delta": {
+                                    "tool_calls": [
+                                        {
+                                            "index": 0,
+                                            "function": {"arguments": "mand\":\"p"},
+                                        }
+                                    ]
+                                }
+                            }
+                        ]
+                    },
+                    {
+                        "choices": [
+                            {
+                                "delta": {
+                                    "tool_calls": [
+                                        {
+                                            "index": 0,
+                                            "function": {"arguments": "wd\"}"},
+                                        }
+                                    ]
+                                },
+                                "finish_reason": "tool_calls",
+                            }
+                        ]
+                    },
+                ],
+                delay=0.001,
+            )
+            return
+
         if "call invalid streamed tool" in prompt:
             self._sse(
                 [
@@ -932,6 +1038,44 @@ class FakeOpenAIHandler(BaseHTTPRequestHandler):
                     },
                 ]
             )
+            return
+
+        if "stream harness reviewer tools" in prompt:
+            names = [
+                item.get("function", {}).get("name")
+                for item in payload.get("tools") or []
+                if isinstance(item, dict)
+            ]
+            seen = json.dumps(
+                {"tool_choice": payload.get("tool_choice"), "tool_names": names},
+                sort_keys=True,
+            )
+            midpoint = len(seen) // 2
+            self._sse(
+                [
+                    {"choices": [{"delta": {"role": "assistant"}}]},
+                    {"choices": [{"delta": {"content": seen[:midpoint]}}]},
+                    {
+                        "choices": [
+                            {
+                                "delta": {"content": seen[midpoint:]},
+                                "finish_reason": "stop",
+                            }
+                        ]
+                    },
+                ],
+                delay=0.001,
+            )
+            return
+
+        if "cancel direct stream" in prompt:
+            chunks = [{"choices": [{"delta": {"role": "assistant"}}]}]
+            chunks.extend(
+                {"choices": [{"delta": {"content": f"cancel-{idx:03d} "}}]}
+                for idx in range(200)
+            )
+            chunks.append({"choices": [{"delta": {}, "finish_reason": "stop"}]})
+            self._sse(chunks, delay=0.02)
             return
 
         if "slow stream heartbeat" in prompt:
@@ -1044,6 +1188,15 @@ def parse_sse(raw: str) -> list[tuple[str, dict[str, Any]]]:
     return events
 
 
+def stream_text(events: list[tuple[str, dict[str, Any]]]) -> str:
+    return "".join(
+        event["delta"]["text"]
+        for name, event in events
+        if name == "content_block_delta"
+        and event.get("delta", {}).get("type") == "text_delta"
+    )
+
+
 def assert_text_stream(proxy_port: int) -> None:
     raw = post_json(
         f"http://127.0.0.1:{proxy_port}/v1/messages",
@@ -1057,12 +1210,7 @@ def assert_text_stream(proxy_port: int) -> None:
     events = parse_sse(raw)
     names = [name for name, _ in events]
     assert names[:2] == ["message_start", "content_block_start"], names
-    text = "".join(
-        event["delta"]["text"]
-        for name, event in events
-        if name == "content_block_delta"
-        and event.get("delta", {}).get("type") == "text_delta"
-    )
+    text = stream_text(events)
     assert text == "stream ok", text
     stop = [
         event["delta"]["stop_reason"]
@@ -1070,6 +1218,31 @@ def assert_text_stream(proxy_port: int) -> None:
         if name == "message_delta"
     ]
     assert stop == ["end_turn"], stop
+
+
+def assert_long_text_stream(proxy_port: int) -> None:
+    raw = post_json(
+        f"http://127.0.0.1:{proxy_port}/v1/messages",
+        {
+            "model": "claude-opus-4-8",
+            "stream": True,
+            "max_tokens": 4096,
+            "messages": [{"role": "user", "content": "long direct stream"}],
+        },
+    )
+    events = parse_sse(raw)
+    names = [name for name, _ in events]
+    assert names.count("message_start") == 1, names
+    assert names[-2:] == ["message_delta", "message_stop"], names
+    expected = "".join(f"chunk-{idx:03d} " for idx in range(80))
+    assert stream_text(events) == expected, stream_text(events)[-80:]
+    text_delta_count = sum(
+        1
+        for name, event in events
+        if name == "content_block_delta"
+        and event.get("delta", {}).get("type") == "text_delta"
+    )
+    assert text_delta_count == 80, text_delta_count
 
 
 def assert_direct_stream_heartbeat(proxy_port: int) -> None:
@@ -1084,13 +1257,7 @@ def assert_direct_stream_heartbeat(proxy_port: int) -> None:
     )
     assert ": heartbeat\n\n" in raw, raw
     events = parse_sse(raw)
-    text = "".join(
-        event["delta"]["text"]
-        for name, event in events
-        if name == "content_block_delta"
-        and event.get("delta", {}).get("type") == "text_delta"
-    )
-    assert text == "slow ok", text
+    assert stream_text(events) == "slow ok", stream_text(events)
 
 
 def assert_tool_stream(proxy_port: int) -> None:
@@ -1112,6 +1279,41 @@ def assert_tool_stream(proxy_port: int) -> None:
                 }
             ],
             "messages": [{"role": "user", "content": "call a tool"}],
+        },
+    )
+    events = parse_sse(raw)
+    tool_starts = [
+        event
+        for name, event in events
+        if name == "content_block_start"
+        and event.get("content_block", {}).get("type") == "tool_use"
+    ]
+    assert len(tool_starts) == 1, events
+    assert tool_starts[0]["content_block"]["name"] == "bash", tool_starts
+    partial_json = "".join(
+        event["delta"]["partial_json"]
+        for name, event in events
+        if name == "content_block_delta"
+        and event.get("delta", {}).get("type") == "input_json_delta"
+    )
+    assert json.loads(partial_json) == {"command": "pwd"}, partial_json
+    stop = [
+        event["delta"]["stop_reason"]
+        for name, event in events
+        if name == "message_delta"
+    ]
+    assert stop == ["tool_use"], stop
+
+
+def assert_split_streamed_tool_arguments(proxy_port: int) -> None:
+    raw = post_json(
+        f"http://127.0.0.1:{proxy_port}/v1/messages",
+        {
+            "model": "claude-opus-4-8",
+            "stream": True,
+            "max_tokens": 64,
+            "tools": [bash_tool()],
+            "messages": [{"role": "user", "content": "call split streamed tool"}],
         },
     )
     events = parse_sse(raw)
@@ -1356,6 +1558,8 @@ def assert_invalid_streamed_tool_filtered(proxy_port: int) -> None:
         if name == "message_delta"
     ]
     assert stop == ["end_turn"], stop
+    metrics = get_json(f"http://127.0.0.1:{proxy_port}/healthz")["metrics"]
+    assert metrics["tool_filters_by_reason"].get("bad_arguments", 0) >= 1, metrics
 
 
 def assert_tool_choice_required(proxy_port: int) -> None:
@@ -1428,6 +1632,37 @@ def assert_harness_tool_specific_allowlist(proxy_port: int) -> None:
         "read_file",
         "submit_output",
     ], upstream_seen
+
+
+def assert_streamed_harness_uses_reviewer_allowlist(proxy_port: int) -> None:
+    raw = post_json(
+        f"http://127.0.0.1:{proxy_port}/v1/messages",
+        {
+            "model": "claude-opus-4-8",
+            "stream": True,
+            "max_tokens": 64,
+            "tool_choice": {"type": "any"},
+            "tools": [
+                bash_tool(),
+                search_skills_tool(),
+                repl_tool(),
+                read_file_tool(),
+                submit_output_tool(),
+            ],
+            "messages": [{"role": "user", "content": "stream harness reviewer tools"}],
+        },
+    )
+    events = parse_sse(raw)
+    upstream_seen = json.loads(stream_text(events))
+    assert upstream_seen["tool_names"] == [
+        "repl",
+        "read_file",
+        "submit_output",
+    ], upstream_seen
+    assert upstream_seen["tool_choice"] == "required", upstream_seen
+    metrics = get_json(f"http://127.0.0.1:{proxy_port}/healthz")["metrics"]
+    assert metrics["messages_by_kind"].get("harness", 0) >= 1, metrics
+    assert metrics["messages_by_stream_mode"].get("direct", 0) >= 1, metrics
 
 
 def assert_harness_closeout_forces_submit_only(proxy_port: int) -> None:
@@ -1789,13 +2024,65 @@ def assert_full_json_stream_fallback(proxy_port: int) -> None:
     events = parse_sse(raw)
     names = [name for name, _ in events]
     assert names.count("message_start") == 1, names
-    text = "".join(
-        event["delta"]["text"]
-        for name, event in events
-        if name == "content_block_delta"
-        and event.get("delta", {}).get("type") == "text_delta"
+    assert stream_text(events) == "full json stream fallback ok", stream_text(events)
+
+
+def assert_stream_error_event(proxy_port: int) -> None:
+    raw = post_json(
+        f"http://127.0.0.1:{proxy_port}/v1/messages",
+        {
+            "model": "claude-opus-4-8",
+            "stream": True,
+            "max_tokens": 64,
+            "messages": [{"role": "user", "content": "stream upstream error event"}],
+        },
     )
-    assert text == "full json stream fallback ok", text
+    events = parse_sse(raw)
+    names = [name for name, _ in events]
+    assert names == ["error"], names
+    error = events[0][1]["error"]
+    assert error["type"] == "upstream_error", error
+    assert error["message"] == "synthetic upstream stream error", error
+    metrics = get_json(f"http://127.0.0.1:{proxy_port}/healthz")["metrics"]
+    assert metrics["upstream_errors_by_status"].get("502", 0) >= 1, metrics
+
+
+def assert_named_stream_error_event(proxy_port: int) -> None:
+    raw = post_json(
+        f"http://127.0.0.1:{proxy_port}/v1/messages",
+        {
+            "model": "claude-opus-4-8",
+            "stream": True,
+            "max_tokens": 64,
+            "messages": [{"role": "user", "content": "stream upstream named error event"}],
+        },
+    )
+    events = parse_sse(raw)
+    names = [name for name, _ in events]
+    assert names == ["error"], names
+    error = events[0][1]["error"]
+    assert error["type"] == "upstream_error", error
+    assert error["message"] == "synthetic named upstream stream error", error
+
+
+def assert_stream_read_exception_becomes_error_event() -> None:
+    from proxy.anthropic_mtplx_proxy import iter_openai_stream_events
+
+    class ExplodingStream:
+        def __iter__(self) -> Any:
+            yield b'data: {"choices":[{"delta":{"role":"assistant"}}]}\n\n'
+            raise TimeoutError("synthetic upstream read timeout")
+
+    events = list(
+        iter_openai_stream_events(
+            ExplodingStream(),
+            heartbeat_seconds=0,
+            request_id="test_stream_read_exception",
+        )
+    )
+    assert events[0][0] == "chunk", events
+    assert events[1][0] == "error", events
+    assert isinstance(events[1][1], TimeoutError), events
 
 
 def assert_stream_connection_closes(proxy_port: int) -> None:
@@ -1831,6 +2118,37 @@ def assert_stream_connection_closes(proxy_port: int) -> None:
             assert sock.recv(1) == b""
         except OSError as exc:
             assert exc.errno == errno.EBADF
+
+
+def assert_client_cancellation_does_not_hang(proxy_port: int) -> None:
+    body = json.dumps(
+        {
+            "model": "claude-opus-4-8",
+            "stream": True,
+            "max_tokens": 4096,
+            "messages": [{"role": "user", "content": "cancel direct stream"}],
+        }
+    ).encode("utf-8")
+    request = (
+        b"POST /v1/messages HTTP/1.1\r\n"
+        b"Host: 127.0.0.1:%d\r\n"
+        b"Content-Type: application/json\r\n"
+        b"anthropic-version: 2023-06-01\r\n"
+        b"Connection: keep-alive\r\n"
+        b"Content-Length: %d\r\n"
+        b"\r\n"
+    ) % (proxy_port, len(body))
+    with socket.create_connection(("127.0.0.1", proxy_port), timeout=2) as sock:
+        sock.settimeout(2)
+        sock.sendall(request + body)
+        received = b""
+        while b"cancel-000" not in received:
+            chunk = sock.recv(4096)
+            assert chunk, received.decode("utf-8", "replace")
+            received += chunk
+    time.sleep(0.2)
+    payload = get_json(f"http://127.0.0.1:{proxy_port}/healthz")
+    assert payload["ok"] is True, payload
 
 
 def assert_models_endpoint(proxy_port: int) -> None:
@@ -1988,11 +2306,17 @@ def main() -> int:
         wait_for_proxy(proxy_port, proc)
         assert_models_endpoint(proxy_port)
         assert_text_stream(proxy_port)
+        assert_long_text_stream(proxy_port)
         assert_direct_stream_heartbeat(proxy_port)
         assert_tool_stream(proxy_port)
+        assert_split_streamed_tool_arguments(proxy_port)
         assert_invalid_streamed_tool_filtered(proxy_port)
         assert_full_json_stream_fallback(proxy_port)
+        assert_stream_error_event(proxy_port)
+        assert_named_stream_error_event(proxy_port)
+        assert_stream_read_exception_becomes_error_event()
         assert_stream_connection_closes(proxy_port)
+        assert_client_cancellation_does_not_hang(proxy_port)
         assert_nonstream(proxy_port)
         assert_wrapper_text_cleaned(proxy_port)
         assert_invalid_native_tool_filtered(proxy_port, "invalid native tool json")
@@ -2149,6 +2473,7 @@ def main() -> int:
     try:
         wait_for_proxy(harness_allowlist_proxy_port, harness_allowlist_proc)
         assert_harness_tool_specific_allowlist(harness_allowlist_proxy_port)
+        assert_streamed_harness_uses_reviewer_allowlist(harness_allowlist_proxy_port)
         assert_harness_closeout_forces_submit_only(harness_allowlist_proxy_port)
     finally:
         harness_allowlist_proc.terminate()
