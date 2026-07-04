@@ -189,7 +189,7 @@ def classify_evidence(
     return {
         "prompt_id": entry.get("id"),
         "evidence_class": evidence_class,
-        "counts_as_model_capability": clean_model_capability,
+        "counts_as_clean_model_capability": clean_model_capability,
         "counts_as_clean_model_figure_reproduction": clean_model_capability
         and entry.get("task") == "paper_key_figure",
         "counts_as_clean_brca_subtype_plot": clean_model_capability

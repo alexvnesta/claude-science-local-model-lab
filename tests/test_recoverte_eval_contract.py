@@ -144,7 +144,7 @@ def test_classifier_downgrades_contaminated_or_incomplete_runs() -> None:
     ) == {
         "prompt_id": "prompt0-paper-to-figure",
         "evidence_class": "paper-to-figure",
-        "counts_as_model_capability": True,
+        "counts_as_clean_model_capability": True,
         "counts_as_clean_model_figure_reproduction": True,
         "counts_as_clean_brca_subtype_plot": False,
     }
@@ -158,7 +158,7 @@ def test_classifier_downgrades_contaminated_or_incomplete_runs() -> None:
         artifact_gate_passed=True,
         positive_evidence_complete=True,
         route_supplied_by_prompt=True,
-    )["counts_as_model_capability"] is False
+    )["counts_as_clean_model_capability"] is False
     assert contract.classify_evidence(
         paper_entry,
         artifact_gate_passed=False,
