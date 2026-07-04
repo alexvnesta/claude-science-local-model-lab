@@ -1,0 +1,24 @@
+I want to evaluate whether Claude Science can go from a public paper to a reproducible plot.
+
+Study: Kong et al. 2019 Nature Communications, DOI 10.1038/s41467-019-13035-2.
+
+Task:
+Reproduce or faithfully reimplement a central transposable-element dysregulation figure from the study using public processed data, author-provided figure data, or public analysis code if available. Do not reprocess FASTQ or BAM files.
+
+Prefer the study's cross-cancer TE dysregulation summary if public processed inputs support it. If the exact figure cannot be reproduced from public processed inputs, make the closest clearly labeled real-data analogue or write blocked provenance and self-score files explaining the stop reason.
+
+Use available Claude Science skills and resources as you normally would. Do not create placeholder, synthetic, random, demo, or illustrative-only plots. Keep archive, package, notebook, and script inspection compact: do not print full archive listings, full notebooks, or full script bodies.
+
+Save artifacts named:
+- recoverte_key_figure_plot.png
+- recoverte_key_figure_tidy_table.tsv
+- recoverte_key_figure_provenance.md
+- recoverte_key_figure_self_score.md
+
+The fixed filenames are harness names, not instructions about which source files to use. Save the four files in the frame workspace root.
+
+The tidy table must include enough columns to audit the plot, including panel or target, source file or data-object provenance, feature or TE name, and numeric value, count, log-fold-change, or expression columns.
+
+The provenance and self-score must record the public source URL or public data path, discovered source files used, row counts or dimensions checked, thresholds found in the source data or script, reproduction class, and a score formatted like N/10.
+
+In the final answer, state reproduction class, model/provider label, files used, dimensions or row counts checked, and a 0-10 score.
