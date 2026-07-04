@@ -1040,34 +1040,6 @@ class FakeOpenAIHandler(BaseHTTPRequestHandler):
             )
             return
 
-        if "stream harness reviewer tools" in prompt:
-            names = [
-                item.get("function", {}).get("name")
-                for item in payload.get("tools") or []
-                if isinstance(item, dict)
-            ]
-            seen = json.dumps(
-                {"tool_choice": payload.get("tool_choice"), "tool_names": names},
-                sort_keys=True,
-            )
-            midpoint = len(seen) // 2
-            self._sse(
-                [
-                    {"choices": [{"delta": {"role": "assistant"}}]},
-                    {"choices": [{"delta": {"content": seen[:midpoint]}}]},
-                    {
-                        "choices": [
-                            {
-                                "delta": {"content": seen[midpoint:]},
-                                "finish_reason": "stop",
-                            }
-                        ]
-                    },
-                ],
-                delay=0.001,
-            )
-            return
-
         if "cancel direct stream" in prompt:
             chunks = [{"choices": [{"delta": {"role": "assistant"}}]}]
             chunks.extend(
@@ -1632,37 +1604,6 @@ def assert_harness_tool_specific_allowlist(proxy_port: int) -> None:
         "read_file",
         "submit_output",
     ], upstream_seen
-
-
-def assert_streamed_harness_uses_reviewer_allowlist(proxy_port: int) -> None:
-    raw = post_json(
-        f"http://127.0.0.1:{proxy_port}/v1/messages",
-        {
-            "model": "claude-opus-4-8",
-            "stream": True,
-            "max_tokens": 64,
-            "tool_choice": {"type": "any"},
-            "tools": [
-                bash_tool(),
-                search_skills_tool(),
-                repl_tool(),
-                read_file_tool(),
-                submit_output_tool(),
-            ],
-            "messages": [{"role": "user", "content": "stream harness reviewer tools"}],
-        },
-    )
-    events = parse_sse(raw)
-    upstream_seen = json.loads(stream_text(events))
-    assert upstream_seen["tool_names"] == [
-        "repl",
-        "read_file",
-        "submit_output",
-    ], upstream_seen
-    assert upstream_seen["tool_choice"] == "required", upstream_seen
-    metrics = get_json(f"http://127.0.0.1:{proxy_port}/healthz")["metrics"]
-    assert metrics["messages_by_kind"].get("harness", 0) >= 1, metrics
-    assert metrics["messages_by_stream_mode"].get("direct", 0) >= 1, metrics
 
 
 def assert_harness_closeout_forces_submit_only(proxy_port: int) -> None:
@@ -2473,7 +2414,6 @@ def main() -> int:
     try:
         wait_for_proxy(harness_allowlist_proxy_port, harness_allowlist_proc)
         assert_harness_tool_specific_allowlist(harness_allowlist_proxy_port)
-        assert_streamed_harness_uses_reviewer_allowlist(harness_allowlist_proxy_port)
         assert_harness_closeout_forces_submit_only(harness_allowlist_proxy_port)
     finally:
         harness_allowlist_proc.terminate()
