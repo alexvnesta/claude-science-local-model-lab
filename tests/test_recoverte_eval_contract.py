@@ -94,6 +94,7 @@ def test_linter_rejects_route_leak_categories_without_private_answer_key() -> No
         [
             "Download ExampleData_1.2.3.tar.gz from https://example.org/data/archive.tgz.",
             "Use staged/ExampleData_1.2.3.tar.gz and Fig2_data/table.RDS.",
+            "Read /Users/alex/.cache/example-route.tsv or ~/.cache/example-route.tsv.",
             "Load the skill exact-route-helper and call archive_route_helper().",
             "Run score-example-route.py and save example_fig2_plot.png.",
         ]
@@ -102,8 +103,10 @@ def test_linter_rejects_route_leak_categories_without_private_answer_key() -> No
     labels = {failure["label"] for failure in contract.lint_prompt(entry, leaked_text)}
 
     assert "versioned data package filename" in labels
+    assert "direct URL" in labels
     assert "direct data URL" in labels
     assert "staged input path" in labels
+    assert "local or cache path" in labels
     assert "figure data directory" in labels
     assert "R-native data object hint" in labels
     assert "exact skill instruction" in labels

@@ -22,8 +22,16 @@ COMMON_ROUTE_LEAK_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
         ),
         "versioned data package filename",
     ),
+    (re.compile(r"https?://[^\s<>)\]]+", re.I), "direct URL"),
     (re.compile(r"https?://\S+/(?:data|download|releases?)/\S+", re.I), "direct data URL"),
     (re.compile(r"\b(?:handoff|staged|inputs?)/[^\s]+", re.I), "staged input path"),
+    (
+        re.compile(
+            r"(?:/Users/|/tmp/|/var/folders/|~/|(?:^|\s)_local/|(?:^|\s)\.cache/)[^\s]*",
+            re.I,
+        ),
+        "local or cache path",
+    ),
     (re.compile(r"\bFig(?:ure)?[0-9A-Za-z_-]*(?:_data|[-_/]data)/", re.I), "figure data directory"),
     (re.compile(r"\bFigure[_-]?[0-9A-Za-z]+\.Rmd\b", re.I), "figure script member"),
     (re.compile(r"\.(?:RDS|RData|rda)\b", re.I), "R-native data object hint"),
