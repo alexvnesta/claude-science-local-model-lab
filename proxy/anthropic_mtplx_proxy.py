@@ -1308,6 +1308,20 @@ def tool_use_block(
     }
 
 
+def unvalidated_tool_use_block(
+    name: str,
+    arguments: Any,
+    tool_id: str | None = None,
+) -> dict[str, Any]:
+    return {
+        "type": "tool_use",
+        "id": claude_science_tool_id(tool_id),
+        "name": name,
+        "input": arguments,
+        **({"caller": {"type": "direct"}} if CONFIG.claude_science_compat else {}),
+    }
+
+
 def parse_json_tool_call_text(
     text: str,
     tool_name_hint: str | None = None,
@@ -1518,7 +1532,7 @@ def openai_to_anthropic(
     for call in message.get("tool_calls") or []:
         fn = call.get("function") or {}
         raw_args = fn.get("arguments") or "{}"
-        candidate = tool_use_block(
+        candidate = unvalidated_tool_use_block(
             str(fn.get("name") or ""),
             raw_args,
             tool_id=call.get("id") or f"toolu_{uuid.uuid4().hex}",
@@ -1647,20 +1661,29 @@ def iter_openai_stream(
     *,
     request_id: str | None = None,
 ) -> Any:
+    event_name: str | None = None
     for raw_line in response:
         line = raw_line.decode("utf-8", "replace").strip()
         if not line or line.startswith(":"):
             continue
         if line.startswith("event:"):
+            event_name = line[6:].strip()
             continue
         if line.startswith("data:"):
             line = line[5:].strip()
         if line == "[DONE]":
             break
         try:
-            yield json.loads(line)
+            chunk = json.loads(line)
         except json.JSONDecodeError:
             log(f"skipping non-json stream line: {line[:200]}", request_id=request_id)
+            event_name = None
+            continue
+        if event_name == "error":
+            yield {"error": chunk}
+        else:
+            yield chunk
+        event_name = None
 
 
 def iter_openai_stream_events(
@@ -1670,8 +1693,11 @@ def iter_openai_stream_events(
     request_id: str | None = None,
 ) -> Any:
     if heartbeat_seconds <= 0:
-        for chunk in iter_openai_stream(response, request_id=request_id):
-            yield ("chunk", chunk)
+        try:
+            for chunk in iter_openai_stream(response, request_id=request_id):
+                yield ("chunk", chunk)
+        except Exception as exc:  # noqa: BLE001 - converted after SSE headers are sent.
+            yield ("error", exc)
         return
 
     events: queue.Queue[tuple[str, Any]] = queue.Queue()
@@ -1680,7 +1706,7 @@ def iter_openai_stream_events(
         try:
             for chunk in iter_openai_stream(response, request_id=request_id):
                 events.put(("chunk", chunk))
-        except BaseException as exc:  # noqa: BLE001 - re-raised in stream thread.
+        except Exception as exc:  # noqa: BLE001 - converted after SSE headers are sent.
             events.put(("error", exc))
         finally:
             events.put(("done", None))
@@ -1697,7 +1723,8 @@ def iter_openai_stream_events(
         if kind == "done":
             return
         if kind == "error":
-            raise value
+            yield (kind, value)
+            return
         yield (kind, value)
 
 
@@ -1737,6 +1764,29 @@ def write_sse_comment(handler: BaseHTTPRequestHandler, comment: str) -> None:
 def finish_sse(handler: BaseHTTPRequestHandler) -> None:
     handler.wfile.flush()
     handler.close_connection = True
+
+
+def stream_error_message(error: Any) -> str:
+    if isinstance(error, dict):
+        message = error.get("message") or error.get("type") or "upstream stream error"
+    else:
+        message = error or "upstream stream error"
+    return str(message)[:500]
+
+
+def emit_stream_error(handler: BaseHTTPRequestHandler, error: Any) -> None:
+    write_sse(
+        handler,
+        "error",
+        {
+            "type": "error",
+            "error": {
+                "type": "upstream_error",
+                "message": stream_error_message(error),
+            },
+        },
+    )
+    finish_sse(handler)
 
 
 def emit_anthropic_message_events(handler: BaseHTTPRequestHandler, message: dict[str, Any]) -> None:
@@ -1962,6 +2012,25 @@ def stream_openai_to_anthropic(
                 write_sse_comment(handler, "heartbeat")
                 handler.wfile.flush()
                 continue
+            if event_kind == "error":
+                stop_text_block()
+                METRICS.record_upstream_error(status=502)
+                log("upstream stream read failed", request_id=request_id)
+                emit_stream_error(handler, chunk)
+                elapsed = time.monotonic() - started
+                METRICS.record_provider_latency(kind=request_kind, elapsed_seconds=elapsed)
+                return
+            if not isinstance(chunk, dict):
+                log("skipping non-object stream chunk", request_id=request_id)
+                continue
+            if "error" in chunk:
+                stop_text_block()
+                METRICS.record_upstream_error(status=502)
+                log("upstream stream returned an error event", request_id=request_id)
+                emit_stream_error(handler, chunk.get("error"))
+                elapsed = time.monotonic() - started
+                METRICS.record_provider_latency(kind=request_kind, elapsed_seconds=elapsed)
+                return
             choices = chunk.get("choices") or []
             if chunk.get("usage"):
                 usage = chunk["usage"]
@@ -2028,7 +2097,7 @@ def stream_openai_to_anthropic(
 
     stop_text_block()
     for _openai_index, block in sorted(tool_blocks.items()):
-        candidate = tool_use_block(
+        candidate = unvalidated_tool_use_block(
             str(block.get("name") or ""),
             block.get("arguments") or "{}",
             tool_id=str(block.get("id") or f"toolu_{uuid.uuid4().hex}"),
