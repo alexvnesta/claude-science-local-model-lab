@@ -1,0 +1,4 @@
+interface:
+  display_name: "Public Omics Analysis"
+  short_description: "Public processed omics analysis"
+  default_prompt: "Use $public-omics-analysis to find a reusable processed public omics data route and make a first-pass plot with provenance."
