@@ -1,0 +1,50 @@
+{
+  "version": 1,
+  "study": {
+    "id": "recoverte",
+    "label": "Kong et al. 2019 Nature Communications",
+    "doi": "10.1038/s41467-019-13035-2"
+  },
+  "prompts": [
+    {
+      "id": "prompt0-paper-to-figure",
+      "file": "eval-prompts/recoverte/prompt0-paper-to-figure.txt",
+      "task": "paper_key_figure",
+      "autonomy_tier": "paper-to-figure",
+      "route_supplied_by": "model",
+      "leak_policy": "paper_natural",
+      "required_artifacts": [
+        "recoverte_key_figure_plot.png",
+        "recoverte_key_figure_tidy_table.tsv",
+        "recoverte_key_figure_provenance.md",
+        "recoverte_key_figure_self_score.md"
+      ],
+      "strict_proxy_requirements": {
+        "server_web_search": "off",
+        "proxy_assisted_tool_calls": "fail",
+        "tool_repair_or_filter_deltas": "fail"
+      },
+      "eligible_for_model_capability_if_clean": true
+    },
+    {
+      "id": "prompt0-natural-hypothesis-to-plot",
+      "file": "eval-prompts/recoverte/prompt0-natural-hypothesis-to-plot.txt",
+      "task": "brca_subtype",
+      "autonomy_tier": "hypothesis-to-plot",
+      "route_supplied_by": "model",
+      "leak_policy": "natural",
+      "required_artifacts": [
+        "brca_te_subtype_plot.png",
+        "brca_te_subtype_tidy_table.tsv",
+        "brca_te_subtype_provenance.md",
+        "brca_te_subtype_self_score.md"
+      ],
+      "strict_proxy_requirements": {
+        "server_web_search": "off",
+        "proxy_assisted_tool_calls": "fail",
+        "tool_repair_or_filter_deltas": "fail"
+      },
+      "eligible_for_model_capability_if_clean": true
+    }
+  ]
+}
