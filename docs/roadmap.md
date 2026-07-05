@@ -2,22 +2,20 @@
 
 ## Current Assessment
 
-This proxy is in a good state for a public research lab. It proves that an
-isolated Claude Science app copy can route Anthropic-style model calls through
-a local proxy into an OpenAI-compatible backend, and it has real tests around
-the fragile parts: streaming conversion, direct-stream idle heartbeats, finite
-SSE close, request ID response headers, tool-call filtering, schema validation,
-Qwen-style reviewer tool-call text, reviewer-specific tool allowlists, Python
-smuggling guards, harness closeout forcing, and redacted health metrics.
+This proxy is useful but still early. It proves that an isolated Claude Science
+app copy can route Anthropic-style model calls through a local proxy into an
+OpenAI-compatible backend, and it has real tests around the fragile transport
+parts: streaming conversion, direct-stream idle heartbeats, finite SSE close,
+request ID response headers, tool-call filtering, schema validation,
+reviewer-specific tool allowlists, and redacted health metrics.
 
 It is not yet a polished production gateway. The main risks are long-running
-streaming behavior, the size of the single proxy file, model-specific adapters
-living near generic conversion code, and the fact that provider support is
-still profile-based rather than a first-class provider abstraction. The first
-module split is underway (`request_shape.py` and `observability.py`), but the
-translation/server state machine is still mostly in one file. Local Qwen 27B
-can complete a real artifact workflow, but it is slow, splits work across many
-tool turns, and needs reviewer-loop guardrails.
+streaming behavior, the size of the single proxy file, and the fact that
+provider support is still profile-based rather than a first-class provider
+abstraction. The first module split is underway (`request_shape.py` and
+`observability.py`), but the translation/server state machine is still mostly
+in one file. Model-specific capability and reviewer quality should be evaluated
+outside the proxy core.
 
 ## Highest-Value Refinements
 
@@ -25,7 +23,7 @@ tool turns, and needs reviewer-loop guardrails.
 
    The test suite now covers direct OpenAI SSE to Anthropic SSE conversion,
    idle heartbeat comments, request-ID headers, finite close, and buffered
-   validation of upstream streamed tool-call argument deltas. The known-good
+   validation of upstream streamed tool-call argument deltas. The default
    MTPLX/Qwen app path is still buffered for short loops. Direct mode still
    needs app-side proof for long generations, safe app-visible incremental tool
    arguments, cancellation under real browser/app disconnects, and
@@ -36,16 +34,16 @@ tool turns, and needs reviewer-loop guardrails.
    Started: `request_shape.py` owns request-kind classification, and
    `observability.py` owns redacted counters/logging/request IDs. A reasonable
    next split would be `server.py`, `config.py`, `anthropic.py`,
-   `openai_compat.py`, `streaming.py`, `tools.py`, `profiles.py`,
-   `schema_validation.py`, and `adapters/qwen.py`. Do this when tests can move
-   with the code, not as a cosmetic shuffle.
+   `openai_compat.py`, `streaming.py`, `tools.py`, `profiles.py`, and
+   `schema_validation.py`. Do this when tests can move with the code, not as a
+   cosmetic shuffle.
 
 3. Continue provider transport cleanup.
 
    OpenRouter and Ollama now have provider smoke scripts, `UPSTREAM_*` aliases,
    a small `doctor` command, explicit `PROXY_PROVIDER_NAME`, profile defaults
-   for direct-stream heartbeats, and launcher pass-through for reviewer policy
-   flags. The next useful layer is a typed config file, more provider-specific
+   for direct-stream heartbeats, and launcher pass-through for reviewer
+   allowlist flags. The next useful layer is a typed config file, more provider-specific
    defaults, and optional live-provider smoke coverage for additional
    OpenAI-compatible services.
 
@@ -53,9 +51,9 @@ tool turns, and needs reviewer-loop guardrails.
 
    Claude Science request kinds (`plain`, `tools_hidden`, `tool_agent`,
    `harness`) should remain the broker's core abstraction. Provider selection,
-   stream mode, and tool adapter choices should hang off that classification
+   stream mode, and tool exposure choices should hang off that classification
    rather than being mixed into app launch scripts. Keep foreground tool
-   allowlists, reviewer tool allowlists, and reviewer closeout policy separate.
+   allowlists and reviewer tool allowlists separate.
 
 5. Improve observability without leaking data.
 
@@ -70,10 +68,10 @@ tool turns, and needs reviewer-loop guardrails.
    Add `pyproject.toml`, an installable console entrypoint, and a typed config
    file format while preserving the simple shell profile path for quick tests.
 
-7. Separate evidence logs from quick-start docs.
+7. Keep quick-start docs short.
 
-   The README should stay cloneable and short. Long frame IDs, app-path proof,
-   and version archaeology should live in evidence docs or release notes.
+   The README should stay cloneable and focused on proxy setup. Long app-path
+   archaeology belongs outside the proxy core.
 
 8. Broaden provider smoke tests beyond Ollama and OpenRouter.
 
@@ -81,34 +79,16 @@ tool turns, and needs reviewer-loop guardrails.
    smoke paths for vLLM, LM Studio, llama.cpp server, and other providers when
    their local endpoints or API keys are present.
 
-9. Add artifact-aware final-response guards.
+9. Keep reviewer budget and stop-policy work outside the proxy core.
 
-   OpenRouter/Gemma produced valid saved artifacts but also hallucinated a
-   nonexistent `{{artifact:...}}` version reference in final prose. The reviewer
-   caught and resolved it, but a future direct-stream-safe guard should either
-   suppress unsupported artifact tags or rewrite them only after the referenced
-   version id is known from `save_artifacts` tool results. This is harder in
-   direct streaming than in buffered mode because text deltas are emitted before
-   the full final answer is available.
+   Some models improve reviewer quality when artifact-inspection tools are
+   visible, but can then over-inspect instead of submitting structured output.
+   Treat this as future reviewer-policy work outside the transport proxy unless
+   a transport bug is proven.
 
-10. Provide figure templates for weaker/local models.
+10. Add local process durability checks.
 
-    Free and local models can execute Python but often make cramped figures.
-    Add reusable plotting helpers or prompt snippets for ranked bar charts,
-    pathway schematics, and BioRender-style layouts so model variability affects
-    content more than layout mechanics.
-
-11. Add reviewer budget and stop-policy controls.
-
-    The Qwen refined run showed reviewer quality improved when `repl` and
-    `read_file` were visible, but the reviewer then over-inspected and delayed
-    `submit_output`. The current closeout threshold is a profile-level guard.
-    A better version would be request-kind-aware and evidence-aware: inspect
-    TSV/Markdown/figure once, then force submit or summarize remaining risk.
-
-12. Add local process durability checks.
-
-    Long Qwen/reviewer loops can leave the isolated app or upstream model
+    Long local/reviewer loops can leave the isolated app or upstream model
     server unavailable. Add a post-run health monitor that reports whether
     official Claude Science, isolated Claude Science, proxy, and upstream model
     ports are still listening, plus a clean recovery recipe.

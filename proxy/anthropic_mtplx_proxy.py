@@ -19,7 +19,6 @@ incrementally from OpenAI-compatible SSE chunks into Anthropic SSE events.
 from __future__ import annotations
 
 import argparse
-import ast
 import errno
 import hashlib
 import json
@@ -89,16 +88,9 @@ DEFAULT_STREAM_HEARTBEAT_SECONDS = float(_env("PROXY_STREAM_HEARTBEAT_SECONDS", 
 DEFAULT_TOOL_MODE = _env("PROXY_TOOL_MODE", "pass")
 DEFAULT_TOOL_ALLOWLIST = _env("PROXY_TOOL_ALLOWLIST", "")
 DEFAULT_TOOL_VALIDATION = _env("PROXY_TOOL_VALIDATION", "schema")
-DEFAULT_TOOL_REPAIR = _env("PROXY_TOOL_REPAIR", "metadata")
-DEFAULT_FORCE_MENTIONED_TOOL = _env("PROXY_FORCE_MENTIONED_TOOL", "0")
-DEFAULT_PARSE_TEXT_TOOL_CALLS = _env("PROXY_PARSE_TEXT_TOOL_CALLS", "0")
-DEFAULT_STRIP_THINKING_TEXT = _env("PROXY_STRIP_THINKING_TEXT", "0")
 DEFAULT_SCHEMA_LOG_PATH = _env("PROXY_SCHEMA_LOG_PATH", "")
 DEFAULT_HARNESS_TOOLS = _env("PROXY_HARNESS_TOOLS", "submit_output")
 DEFAULT_HARNESS_TOOL_ALLOWLIST = _env("PROXY_HARNESS_TOOL_ALLOWLIST", "")
-DEFAULT_HARNESS_FORCE_SUBMIT_AFTER_TOOL_RESULTS = int(
-    _env("PROXY_HARNESS_FORCE_SUBMIT_AFTER_TOOL_RESULTS", "0")
-)
 DEFAULT_CLAUDE_SCIENCE_COMPAT = _env("PROXY_CLAUDE_SCIENCE_COMPAT", "0")
 DEFAULT_MTPLX_AVOID_BACKGROUND_BYPASS = _env("PROXY_MTPLX_AVOID_BACKGROUND_BYPASS", "0")
 DEFAULT_MTPLX_BACKGROUND_MAX_TOKENS = int(_env("PROXY_MTPLX_BACKGROUND_MAX_TOKENS", "48"))
@@ -135,14 +127,9 @@ class ProxyConfig:
         tool_mode: str,
         tool_allowlist: list[str],
         tool_validation: str,
-        tool_repair: str,
-        force_mentioned_tool: bool,
-        parse_text_tool_calls: bool,
-        strip_thinking_text: bool,
         schema_log_path: str,
         harness_tools: list[str],
         harness_tool_allowlist: list[str],
-        harness_force_submit_after_tool_results: int,
         claude_science_compat: bool,
         mtplx_avoid_background_bypass: bool,
         mtplx_background_max_tokens: int,
@@ -162,14 +149,9 @@ class ProxyConfig:
         self.tool_mode = tool_mode
         self.tool_allowlist = tool_allowlist
         self.tool_validation = tool_validation
-        self.tool_repair = tool_repair
-        self.force_mentioned_tool = force_mentioned_tool
-        self.parse_text_tool_calls = parse_text_tool_calls
-        self.strip_thinking_text = strip_thinking_text
         self.schema_log_path = schema_log_path
         self.harness_tools = harness_tools
         self.harness_tool_allowlist = harness_tool_allowlist
-        self.harness_force_submit_after_tool_results = harness_force_submit_after_tool_results
         self.claude_science_compat = claude_science_compat
         self.mtplx_avoid_background_bypass = mtplx_avoid_background_bypass
         self.mtplx_background_max_tokens = mtplx_background_max_tokens
@@ -191,14 +173,9 @@ CONFIG = ProxyConfig(
     DEFAULT_TOOL_MODE,
     [],
     "schema",
-    "metadata",
-    False,
-    False,
-    False,
     "",
     [],
     [],
-    0,
     False,
     False,
     48,
@@ -267,13 +244,6 @@ def parse_tool_validation(value: str) -> str:
     return mode
 
 
-def parse_tool_repair(value: str) -> str:
-    mode = value.strip().lower()
-    if mode not in ("off", "metadata"):
-        raise ValueError("tool repair must be 'off' or 'metadata'")
-    return mode
-
-
 def parse_bool(value: str) -> bool:
     lowered = value.strip().lower()
     if lowered in ("1", "true", "yes", "on"):
@@ -286,14 +256,9 @@ def parse_bool(value: str) -> bool:
 CONFIG.advertised_models = parse_csv(DEFAULT_ADVERTISED_MODELS)
 CONFIG.tool_allowlist = parse_csv(DEFAULT_TOOL_ALLOWLIST)
 CONFIG.tool_validation = parse_tool_validation(DEFAULT_TOOL_VALIDATION)
-CONFIG.tool_repair = parse_tool_repair(DEFAULT_TOOL_REPAIR)
-CONFIG.force_mentioned_tool = parse_bool(DEFAULT_FORCE_MENTIONED_TOOL)
-CONFIG.parse_text_tool_calls = parse_bool(DEFAULT_PARSE_TEXT_TOOL_CALLS)
-CONFIG.strip_thinking_text = parse_bool(DEFAULT_STRIP_THINKING_TEXT)
 CONFIG.schema_log_path = DEFAULT_SCHEMA_LOG_PATH
 CONFIG.harness_tools = parse_csv(DEFAULT_HARNESS_TOOLS)
 CONFIG.harness_tool_allowlist = parse_csv(DEFAULT_HARNESS_TOOL_ALLOWLIST)
-CONFIG.harness_force_submit_after_tool_results = DEFAULT_HARNESS_FORCE_SUBMIT_AFTER_TOOL_RESULTS
 CONFIG.claude_science_compat = parse_bool(DEFAULT_CLAUDE_SCIENCE_COMPAT)
 CONFIG.mtplx_avoid_background_bypass = parse_bool(DEFAULT_MTPLX_AVOID_BACKGROUND_BYPASS)
 CONFIG.mtplx_background_max_tokens = DEFAULT_MTPLX_BACKGROUND_MAX_TOKENS
@@ -415,68 +380,6 @@ def user_text_without_tool_results(message: dict[str, Any]) -> str:
     return block_text(kept)
 
 
-def latest_user_text(payload: dict[str, Any]) -> str:
-    for message in reversed(payload.get("messages") or []):
-        if isinstance(message, dict) and message.get("role") == "user":
-            return user_text_without_tool_results(message)
-    return ""
-
-
-def completed_harness_tool_names(payload: dict[str, Any]) -> set[str]:
-    tool_use_names_by_id: dict[str, str] = {}
-    completed_names: set[str] = set()
-    harness_tools = set(CONFIG.harness_tools)
-
-    for message in payload.get("messages") or []:
-        if not isinstance(message, dict):
-            continue
-        role = message.get("role")
-        content = message.get("content")
-        if role == "assistant" and isinstance(content, list):
-            for block in content:
-                if not isinstance(block, dict) or block.get("type") != "tool_use":
-                    continue
-                name = block.get("name")
-                tool_id = block.get("id")
-                if isinstance(name, str) and name in harness_tools and isinstance(tool_id, str):
-                    tool_use_names_by_id[tool_id] = name
-        elif role == "user":
-            for block in tool_result_blocks(message):
-                tool_id = block.get("tool_use_id") or block.get("id")
-                if isinstance(tool_id, str) and tool_id in tool_use_names_by_id:
-                    completed_names.add(tool_use_names_by_id[tool_id])
-
-    return completed_names
-
-
-def completed_non_harness_tool_result_count(payload: dict[str, Any]) -> int:
-    tool_use_names_by_id: dict[str, str] = {}
-    completed_count = 0
-    harness_tools = set(CONFIG.harness_tools)
-
-    for message in payload.get("messages") or []:
-        if not isinstance(message, dict):
-            continue
-        role = message.get("role")
-        content = message.get("content")
-        if role == "assistant" and isinstance(content, list):
-            for block in content:
-                if not isinstance(block, dict) or block.get("type") != "tool_use":
-                    continue
-                name = block.get("name")
-                tool_id = block.get("id")
-                if isinstance(name, str) and isinstance(tool_id, str):
-                    tool_use_names_by_id[tool_id] = name
-        elif role == "user":
-            for block in tool_result_blocks(message):
-                tool_id = block.get("tool_use_id") or block.get("id")
-                name = tool_use_names_by_id.get(tool_id) if isinstance(tool_id, str) else None
-                if isinstance(name, str) and name not in harness_tools:
-                    completed_count += 1
-
-    return completed_count
-
-
 def openai_message_roles(request: dict[str, Any]) -> list[str]:
     roles: list[str] = []
     for message in request.get("messages") or []:
@@ -572,28 +475,11 @@ def assistant_message_from_blocks(message: dict[str, Any]) -> dict[str, Any]:
 
 def anthropic_to_openai(payload: dict[str, Any], stream: bool = False) -> dict[str, Any]:
     messages: list[dict[str, Any]] = []
-    payload_tool_names = tool_names(payload)
 
     system = payload.get("system")
     system_text = block_text(system)
     if system_text:
         messages.append({"role": "system", "content": system_text})
-    if CONFIG.tool_mode == "drop" and payload_tool_names and "submit_output" not in payload_tool_names:
-        messages.append(
-            {
-                "role": "system",
-                "content": (
-                    "Local proxy note: Claude Science offered tools for this turn, "
-                    "but this profile intentionally hides tool schemas from the local model. "
-                    "Do not emit tool-call markup, anonymous_function tags, XML tags, or function-call text. "
-                    "Do not claim that you searched, browsed, read files, ran code, created artifacts, "
-                    "or made a figure. If the user asks for live research, files, code execution, "
-                    "or artifacts, say this local profile cannot execute those tools and provide only a "
-                    "short direct draft, plan, or caveated analysis based on the visible prompt. "
-                    "Keep the answer under 220 words so it can finish in one response."
-                ),
-            }
-        )
 
     for message in payload.get("messages") or []:
         if not isinstance(message, dict):
@@ -653,117 +539,26 @@ def anthropic_to_openai(payload: dict[str, Any], stream: bool = False) -> dict[s
     if tools and CONFIG.tool_mode == "pass":
         request["tools"] = tools
 
+    forwarded_tool_names = {
+        tool["function"]["name"]
+        for tool in tools
+        if isinstance(tool.get("function"), dict)
+        and isinstance(tool["function"].get("name"), str)
+    }
     tool_choice = payload.get("tool_choice")
-    forced_tool = forced_mentioned_tool(
-        payload,
-        [
-            tool["function"]["name"]
-            for tool in tools
-            if isinstance(tool.get("function"), dict)
-            and isinstance(tool["function"].get("name"), str)
-        ],
-    )
-    if isinstance(tool_choice, dict) and CONFIG.tool_mode == "pass":
+    if isinstance(tool_choice, dict) and CONFIG.tool_mode == "pass" and forwarded_tool_names:
         choice_type = tool_choice.get("type")
         if choice_type == "auto":
             request["tool_choice"] = "auto"
         elif choice_type == "any":
             request["tool_choice"] = "required"
-        elif choice_type == "tool" and tool_choice.get("name"):
+        elif choice_type == "tool" and tool_choice.get("name") in forwarded_tool_names:
             request["tool_choice"] = {
                 "type": "function",
                 "function": {"name": tool_choice["name"]},
             }
-    elif forced_tool and CONFIG.tool_mode == "pass":
-        request["tool_choice"] = {
-            "type": "function",
-            "function": {"name": forced_tool},
-        }
-
-    forwarded_names = [
-        tool["function"]["name"]
-        for tool in tools
-        if isinstance(tool.get("function"), dict)
-        and isinstance(tool["function"].get("name"), str)
-    ]
-    harness_tools = set(CONFIG.harness_tools)
-    closeout_harness_name = None
-    if CONFIG.harness_force_submit_after_tool_results > 0:
-        completed_harness = completed_harness_tool_names(payload)
-        completed_non_harness = completed_non_harness_tool_result_count(payload)
-        for name in forwarded_names:
-            if (
-                name in harness_tools
-                and name not in completed_harness
-                and completed_non_harness >= CONFIG.harness_force_submit_after_tool_results
-            ):
-                closeout_harness_name = name
-                break
-    if closeout_harness_name:
-        tools = [
-            tool
-            for tool in tools
-            if tool.get("function", {}).get("name") == closeout_harness_name
-        ]
-        request["tools"] = tools
-        forwarded_names = [closeout_harness_name]
-        request["tool_choice"] = {
-            "type": "function",
-            "function": {"name": closeout_harness_name},
-        }
-        log(
-            "forcing harness closeout "
-            f"{closeout_harness_name!r} after "
-            f"{completed_non_harness_tool_result_count(payload)} non-harness tool results"
-        )
-    if (
-        CONFIG.tool_mode == "pass"
-        and len(forwarded_names) == 1
-        and forwarded_names[0] in harness_tools
-        and request.get("tool_choice") in (None, "auto", "required")
-    ):
-        harness_name = forwarded_names[0]
-        if harness_name in completed_harness_tool_names(payload):
-            if request.get("tool_choice") == "required":
-                request["tool_choice"] = "auto"
-            log(f"not forcing completed harness tool_choice {harness_name!r}")
-        else:
-            request["tool_choice"] = {
-                "type": "function",
-                "function": {"name": harness_name},
-            }
-            log(f"forcing harness tool_choice {harness_name!r}")
 
     return request
-
-
-def forced_mentioned_tool(payload: dict[str, Any], forwarded_tool_names: list[str]) -> str | None:
-    if not CONFIG.force_mentioned_tool or not forwarded_tool_names:
-        return None
-    text = latest_user_text(payload).lower()
-    if not text:
-        return None
-    best: tuple[int, int, str] | None = None
-    for name in forwarded_tool_names:
-        escaped = re.escape(name.lower())
-        patterns = [
-            rf"\buse\s+(?:the\s+)?`?{escaped}`?\s+tool\b",
-            rf"\buse\s+(?:the\s+)?`?{escaped}`?\b",
-            rf"\brun\s+(?:the\s+)?`?{escaped}`?\b",
-            rf"\bcall\s+(?:the\s+)?`?{escaped}`?\s+tool\b",
-            rf"\bcall\s+(?:the\s+)?`?{escaped}`?\b",
-            rf"\bload\s+(?:the\s+)?`?{escaped}`?\s+tool\b",
-            rf"\bmust\s+call\s+(?:the\s+)?`?{escaped}`?\b",
-            rf"\bafter\s+`?{escaped}`?\s+(?:returns|succeeds|finishes)\b",
-        ]
-        for pattern in patterns:
-            match = re.search(pattern, text)
-            if not match:
-                continue
-            candidate = (match.start(), -len(name), name)
-            if best is None or candidate < best:
-                best = candidate
-    return best[2] if best else None
 
 
 def tool_names(payload: dict[str, Any]) -> list[str]:
@@ -814,28 +609,6 @@ def tool_schema_map(
         elif isinstance(name, str) and name:
             schemas[name] = {"type": "object"}
     return schemas
-
-
-def classify_request_kind(
-    payload: dict[str, Any],
-    request: dict[str, Any],
-) -> str:
-    offered = set(tool_names(payload))
-    forwarded = {
-        item.get("function", {}).get("name")
-        for item in request.get("tools") or []
-        if isinstance(item, dict)
-    }
-    forwarded = {name for name in forwarded if isinstance(name, str)}
-    harness = set(CONFIG.harness_tools)
-
-    if offered & harness or forwarded & harness:
-        return "harness"
-    if forwarded:
-        return "tool_agent"
-    if offered:
-        return "tools_hidden"
-    return "plain"
 
 
 def schema_digest(schema: Any) -> str:
@@ -903,12 +676,6 @@ def log_tool_schema_inventory(payload: dict[str, Any]) -> None:
             handle.write(json.dumps(record, sort_keys=True) + "\n")
     except OSError as exc:
         log(f"could not write schema inventory to {CONFIG.schema_log_path}: {exc}")
-
-
-def single_tool_name(names: list[str]) -> str | None:
-    if len(names) != 1:
-        return None
-    return names[0]
 
 
 def schema_type_matches(value: Any, expected: str) -> bool:
@@ -1022,133 +789,6 @@ def coerce_tool_arguments(arguments: Any) -> dict[str, Any] | None:
     return None
 
 
-def repair_metadata_arguments(
-    name: str,
-    arguments: dict[str, Any],
-    schema: dict[str, Any] | None,
-) -> dict[str, Any]:
-    if CONFIG.tool_repair != "metadata" or not schema:
-        return arguments
-    required = schema.get("required")
-    properties = schema.get("properties")
-    if not isinstance(required, list) or "human_description" not in required:
-        return arguments
-    if not isinstance(properties, dict):
-        return arguments
-    human_description_schema = properties.get("human_description")
-    if not isinstance(human_description_schema, dict):
-        return arguments
-    if human_description_schema.get("type") not in (None, "string"):
-        return arguments
-    if "human_description" in arguments:
-        return arguments
-
-    repaired = dict(arguments)
-    repaired["human_description"] = f"Local proxy repaired missing human_description for {name}."
-    log(f"repaired missing human_description for tool call {name!r}")
-    return repaired
-
-
-def string_to_list_argument(value: str) -> list[str]:
-    stripped = value.strip()
-    if not stripped:
-        return []
-    try:
-        parsed = json.loads(stripped)
-    except json.JSONDecodeError:
-        parsed = None
-    if isinstance(parsed, list) and all(isinstance(item, str) for item in parsed):
-        return parsed
-
-    lines = [
-        re.sub(r"^\s*(?:[-*]|\d+[.)])\s*", "", line).strip()
-        for line in stripped.splitlines()
-    ]
-    nonempty = [line for line in lines if line]
-    return nonempty or [stripped]
-
-
-def repair_submit_output_arguments(
-    name: str,
-    arguments: dict[str, Any],
-    schema: dict[str, Any] | None,
-) -> dict[str, Any]:
-    if CONFIG.tool_repair != "metadata" or name != "submit_output" or not schema:
-        return arguments
-    properties = schema.get("properties")
-    if not isinstance(properties, dict):
-        return arguments
-
-    bullets_schema = properties.get("_completion_bullets")
-    if not isinstance(bullets_schema, dict):
-        return arguments
-    if bullets_schema.get("type") != "array":
-        return arguments
-    bullets = arguments.get("_completion_bullets")
-    if not isinstance(bullets, str):
-        return arguments
-
-    repaired = dict(arguments)
-    repaired["_completion_bullets"] = string_to_list_argument(bullets)
-    log("repaired submit_output _completion_bullets string into an array")
-    return repaired
-
-
-def validate_python_arguments(name: str, arguments: dict[str, Any]) -> str | None:
-    if name != "python":
-        return None
-
-    code = arguments.get("code")
-    if not isinstance(code, str):
-        return None
-
-    stripped = code.strip()
-    single_line = "\n" not in stripped and "\r" not in stripped
-    if not stripped:
-        return "empty code"
-
-    lower = stripped.lower()
-    path_like_suffix = (
-        ".py",
-        ".ipynb",
-        ".txt",
-        ".md",
-        ".csv",
-        ".tsv",
-        ".json",
-        ".png",
-        ".pdf",
-    )
-    python_syntax_markers = ("(", ")", "=", "import ", "from ", "def ", "class ", "for ", "while ")
-    if (
-        single_line
-        and len(stripped) <= 260
-        and lower.endswith(path_like_suffix)
-        and not any(marker in lower for marker in python_syntax_markers)
-    ):
-        return "code field is only a path or artifact filename"
-
-    if (
-        single_line
-        and len(stripped) > 400
-        and lower.startswith(("import ", "from "))
-        and stripped.count(",") > 15
-    ):
-        return "single-line import blob is likely a malformed tool call"
-
-    tool_like_call = re.search(
-        r"(?m)^\s*"
-        r"(?:skill|search_skills|save_artifacts|read_file|web_search|repl|"
-        r"summary_query|query_target_history|boundary|update_step_status)"
-        r"\s*\(\s*(?:\{|human_description\s*=)",
-        stripped,
-    )
-    if tool_like_call:
-        return "Claude Science tool call was placed inside python code"
-
-    return None
-
-
 def validate_tool_use_block(
     block: dict[str, Any] | None,
     tool_schemas: dict[str, dict[str, Any]],
@@ -1178,12 +818,10 @@ def validate_tool_use_block(
         log(f"dropping tool call {name!r}; arguments are not a JSON object")
         return None
 
-    schema = tool_schemas.get(name)
-    arguments = repair_metadata_arguments(name, arguments, schema)
-    arguments = repair_submit_output_arguments(name, arguments, schema)
     block["input"] = arguments
 
     if CONFIG.tool_validation == "schema":
+        schema = tool_schemas.get(name)
         if schema:
             errors = validate_json_schema(arguments, schema)
             if errors:
@@ -1191,53 +829,7 @@ def validate_tool_use_block(
                 log(f"dropping invalid tool call {name!r}: {'; '.join(errors[:3])}")
                 return None
 
-    python_error = validate_python_arguments(name, arguments)
-    if python_error:
-        METRICS.record_tool_filter(reason="python_sanity")
-        log(f"dropping invalid python tool call: {python_error}")
-        return None
-
     return block
-
-
-def parse_json_object_text(text: str) -> dict[str, Any] | None:
-    stripped = text.strip()
-    if stripped.startswith("```"):
-        lines = stripped.splitlines()
-        if lines and lines[0].strip() in ("```", "```json", "```JSON"):
-            stripped = "\n".join(lines[1:]).strip()
-            if stripped.endswith("```"):
-                stripped = stripped[: -len("```")].strip()
-    elif "```" in stripped:
-        match = re.search(r"```(?:json|JSON)?\s*(.*?)```", stripped, flags=re.DOTALL)
-        if match:
-            stripped = match.group(1).strip()
-    if not stripped.startswith("{"):
-        return None
-    try:
-        parsed = json.loads(stripped)
-    except json.JSONDecodeError:
-        return None
-    return parsed if isinstance(parsed, dict) else None
-
-
-def clean_model_text(text: str) -> str:
-    cleaned = text.strip()
-    if CONFIG.strip_thinking_text:
-        cleaned = re.sub(
-            r"^\s*<(?:think|thinking|reasoning?)\b[^>]*>.*?</(?:think|thinking|reasoning?)\s*>\s*",
-            "",
-            cleaned,
-            flags=re.DOTALL | re.IGNORECASE,
-        ).strip()
-    for tag in ("mtplx_final_answer", "final_answer"):
-        open_tag = f"<{tag}>"
-        close_tag = f"</{tag}>"
-        if cleaned.startswith(open_tag):
-            cleaned = cleaned[len(open_tag) :].lstrip()
-        if cleaned.endswith(close_tag):
-            cleaned = cleaned[: -len(close_tag)].rstrip()
-    return cleaned
 
 
 def claude_science_tool_id(tool_id: str | None) -> str:
@@ -1248,64 +840,6 @@ def claude_science_tool_id(tool_id: str | None) -> str:
     seed = tool_id or uuid.uuid4().hex
     digest = hashlib.sha256(str(seed).encode("utf-8")).hexdigest()[:24]
     return f"toolu_{digest}"
-
-
-def parse_function_call_text(text: str, tool_name: str) -> dict[str, Any] | None:
-    stripped = text.strip()
-    if not stripped.startswith(f"{tool_name}("):
-        return None
-    try:
-        parsed = ast.parse(stripped, mode="eval")
-    except SyntaxError:
-        return None
-    call = parsed.body
-    if not isinstance(call, ast.Call):
-        return None
-    if not isinstance(call.func, ast.Name) or call.func.id != tool_name:
-        return None
-
-    arguments: dict[str, Any] = {}
-    if len(call.args) == 1 and not call.keywords:
-        try:
-            value = ast.literal_eval(call.args[0])
-        except (ValueError, SyntaxError):
-            value = None
-        if isinstance(value, dict):
-            arguments.update(value)
-    for keyword in call.keywords:
-        if keyword.arg is None:
-            continue
-        try:
-            arguments[keyword.arg] = ast.literal_eval(keyword.value)
-        except (ValueError, SyntaxError):
-            return None
-    return arguments if arguments else None
-
-
-def parse_markdown_function_call_text(text: str, tool_name: str) -> dict[str, Any] | None:
-    stripped = text.strip()
-    prefix = f"[{tool_name}]("
-    if not stripped.startswith(prefix) or not stripped.endswith(")"):
-        return None
-    target = stripped[len(prefix) : -1].strip()
-    return parse_function_call_text(target, tool_name)
-
-
-def tool_use_block(
-    name: str,
-    arguments: Any,
-    tool_id: str | None = None,
-) -> dict[str, Any] | None:
-    parsed_arguments = coerce_tool_arguments(arguments)
-    if parsed_arguments is None:
-        return None
-    return {
-        "type": "tool_use",
-        "id": claude_science_tool_id(tool_id),
-        "name": name,
-        "input": parsed_arguments,
-        **({"caller": {"type": "direct"}} if CONFIG.claude_science_compat else {}),
-    }
 
 
 def unvalidated_tool_use_block(
@@ -1321,189 +855,6 @@ def unvalidated_tool_use_block(
         **({"caller": {"type": "direct"}} if CONFIG.claude_science_compat else {}),
     }
 
-
-def parse_json_tool_call_text(
-    text: str,
-    tool_name_hint: str | None = None,
-    allowed_tool_names: list[str] | None = None,
-) -> dict[str, Any] | None:
-    parsed = parse_json_object_text(text)
-    if parsed is None:
-        return None
-
-    allowed_names = set(allowed_tool_names or [])
-
-    def allowed(name: str) -> bool:
-        return not allowed_names or name in allowed_names
-
-    function = parsed.get("function")
-    if isinstance(function, dict):
-        name_value = function.get("name") or parsed.get("name")
-        if isinstance(name_value, str) and allowed(name_value):
-            return tool_use_block(
-                name_value,
-                function.get("arguments", parsed.get("arguments", parsed.get("input", {}))),
-            )
-
-    name_value = parsed.get("name") or parsed.get("tool") or parsed.get("function")
-    if isinstance(name_value, str) and allowed(name_value):
-        return tool_use_block(name_value, parsed.get("arguments", parsed.get("input", {})))
-
-    if tool_name_hint == "submit_output":
-        return tool_use_block(tool_name_hint, parsed)
-
-    if "submit_output" in allowed_names and ("verdict" in parsed or "findings" in parsed):
-        return tool_use_block("submit_output", parsed)
-
-    return None
-
-
-def parse_loose_value(text: str) -> Any:
-    value = text.strip()
-    try:
-        return json.loads(value)
-    except json.JSONDecodeError:
-        return value
-
-
-def parse_xmlish_tool_call_text(
-    text: str,
-    allowed_tool_names: list[str] | None = None,
-) -> tuple[str, dict[str, Any]] | None:
-    stripped = text.strip()
-    if not stripped.startswith("<tool_call>"):
-        return None
-    match = re.search(r"<function=([A-Za-z_][A-Za-z0-9_.-]*)>", stripped)
-    if not match:
-        return None
-    name = match.group(1)
-    allowed_names = set(allowed_tool_names or [])
-    if allowed_names and name not in allowed_names:
-        return None
-
-    raw_arguments: dict[str, Any] = {}
-    for parameter, raw_value in re.findall(
-        r"<parameter=([A-Za-z_][A-Za-z0-9_.-]*)>(.*?)</parameter>",
-        stripped,
-        flags=re.DOTALL,
-    ):
-        raw_arguments[parameter] = parse_loose_value(raw_value)
-    if not raw_arguments:
-        body_start = match.end()
-        body_match = re.search(r"</function>|</tool_call>", stripped[body_start:], flags=re.DOTALL)
-        body_end = body_start + body_match.start() if body_match else len(stripped)
-        body = stripped[body_start:body_end]
-        parameter_matches = list(
-            re.finditer(r"<parameter=([A-Za-z_][A-Za-z0-9_.-]*)>", body)
-        )
-        for index, parameter_match in enumerate(parameter_matches):
-            value_start = parameter_match.end()
-            value_end = (
-                parameter_matches[index + 1].start()
-                if index + 1 < len(parameter_matches)
-                else len(body)
-            )
-            raw_value = body[value_start:value_end].strip()
-            raw_arguments[parameter_match.group(1)] = parse_loose_value(raw_value)
-
-    if not raw_arguments:
-        return None
-
-    argument_value = raw_arguments.get("arguments")
-    if isinstance(argument_value, dict):
-        return name, argument_value
-    return name, raw_arguments
-
-
-def parse_text_tool_call(
-    content: Any,
-    tool_name_hint: str | None = None,
-    allowed_tool_names: list[str] | None = None,
-) -> dict[str, Any] | None:
-    if not CONFIG.parse_text_tool_calls or not isinstance(content, str):
-        return None
-    stripped = content.strip()
-    allowed_names = set(allowed_tool_names or [])
-
-    if tool_name_hint:
-        json_tool = parse_json_tool_call_text(
-            stripped,
-            tool_name_hint=tool_name_hint,
-            allowed_tool_names=allowed_tool_names,
-        )
-        if json_tool is not None:
-            return json_tool
-        arguments = parse_function_call_text(stripped, tool_name_hint)
-        if arguments is not None:
-            return tool_use_block(tool_name_hint, arguments)
-
-    json_tool = parse_json_tool_call_text(stripped, allowed_tool_names=allowed_tool_names)
-    if json_tool is not None:
-        return json_tool
-
-    for name in sorted(allowed_names, key=len, reverse=True):
-        arguments = (
-            parse_function_call_text(stripped, name)
-            or parse_markdown_function_call_text(stripped, name)
-        )
-        if arguments is not None:
-            return tool_use_block(name, arguments)
-
-    xmlish = parse_xmlish_tool_call_text(stripped, allowed_tool_names=allowed_tool_names)
-    if xmlish is not None:
-        name, arguments = xmlish
-        return tool_use_block(name, arguments)
-
-    parts = stripped.split("::", 3)
-    if len(parts) == 4 and parts[0] == "" and parts[1] and parts[2] in ("+json", "json"):
-        try:
-            arguments = json.loads(parts[3].strip())
-        except json.JSONDecodeError:
-            arguments = None
-        if isinstance(arguments, dict) and (not allowed_names or parts[1] in allowed_names):
-            return tool_use_block(parts[1], arguments)
-
-    marker = "<tool_call>"
-    marker_at = stripped.find(marker)
-    if marker_at < 0:
-        return None
-
-    xmlish = parse_xmlish_tool_call_text(
-        stripped[marker_at:],
-        allowed_tool_names=allowed_tool_names,
-    )
-    if xmlish is not None:
-        name, arguments = xmlish
-        return tool_use_block(name, arguments)
-
-    raw = stripped[marker_at + len(marker) :].strip()
-    start_positions = [pos for pos in (raw.find("["), raw.find("{")) if pos >= 0]
-    if not start_positions:
-        return None
-    raw = raw[min(start_positions) :].strip()
-
-    try:
-        parsed = json.loads(raw)
-    except json.JSONDecodeError:
-        return None
-
-    name: str | None = None
-    arguments: Any = {}
-    if isinstance(parsed, list) and len(parsed) >= 2:
-        name = parsed[0] if isinstance(parsed[0], str) else None
-        arguments = parsed[1]
-    elif isinstance(parsed, dict):
-        name_value = parsed.get("name") or parsed.get("tool") or parsed.get("function")
-        name = name_value if isinstance(name_value, str) else None
-        arguments = parsed.get("arguments", parsed.get("input", {}))
-
-    if not name:
-        return None
-    if allowed_names and name not in allowed_names:
-        return None
-    return tool_use_block(name, arguments)
-
-
 def openai_to_anthropic(
     data: dict[str, Any],
     requested_model: str | None = None,
@@ -1514,20 +865,10 @@ def openai_to_anthropic(
     message = choice.get("message") or {}
     content_blocks: list[dict[str, Any]] = []
     schemas = tool_schemas or {}
-    offered_tool_names = list(schemas)
 
     content = message.get("content")
-    text_tool_name_hint = single_tool_name(offered_tool_names)
-    parsed_text_tool = parse_text_tool_call(
-        content,
-        tool_name_hint=text_tool_name_hint,
-        allowed_tool_names=offered_tool_names,
-    )
-    parsed_text_tool = validate_tool_use_block(parsed_text_tool, schemas)
-    if parsed_text_tool:
-        content_blocks.append(parsed_text_tool)
-    elif content:
-        content_blocks.append({"type": "text", "text": clean_model_text(str(content))})
+    if content:
+        content_blocks.append({"type": "text", "text": str(content).strip()})
 
     for call in message.get("tool_calls") or []:
         fn = call.get("function") or {}
@@ -2189,16 +1530,9 @@ class Handler(BaseHTTPRequestHandler):
                     "tool_mode": CONFIG.tool_mode,
                     "tool_allowlist": CONFIG.tool_allowlist,
                     "tool_validation": CONFIG.tool_validation,
-                    "tool_repair": CONFIG.tool_repair,
-                    "force_mentioned_tool": CONFIG.force_mentioned_tool,
-                    "parse_text_tool_calls": CONFIG.parse_text_tool_calls,
-                    "strip_thinking_text": CONFIG.strip_thinking_text,
                     "schema_log_path": CONFIG.schema_log_path,
                     "harness_tools": CONFIG.harness_tools,
                     "harness_tool_allowlist": CONFIG.harness_tool_allowlist,
-                    "harness_force_submit_after_tool_results": (
-                        CONFIG.harness_force_submit_after_tool_results
-                    ),
                     "claude_science_compat": CONFIG.claude_science_compat,
                     "mtplx_avoid_background_bypass": CONFIG.mtplx_avoid_background_bypass,
                     "mtplx_background_max_tokens": CONFIG.mtplx_background_max_tokens,
@@ -2397,30 +1731,6 @@ def main() -> int:
         help="Validate returned tool calls before emitting Anthropic tool_use blocks.",
     )
     parser.add_argument(
-        "--tool-repair",
-        default=CONFIG.tool_repair,
-        choices=("off", "metadata"),
-        help="Repair safe missing tool-call metadata fields before schema validation.",
-    )
-    parser.add_argument(
-        "--force-mentioned-tool",
-        default="1" if CONFIG.force_mentioned_tool else "0",
-        help="When enabled, force named tool_choice if latest user text explicitly says to use/call/load that tool.",
-    )
-    parser.add_argument(
-        "--parse-text-tool-calls",
-        default="1" if CONFIG.parse_text_tool_calls else "0",
-        help="Convert narrow textual <tool_call>[...] responses into Anthropic tool_use blocks.",
-    )
-    parser.add_argument(
-        "--strip-thinking-text",
-        default="1" if CONFIG.strip_thinking_text else "0",
-        help=(
-            "Strip leading local-model <think>/<reasoning> text from buffered "
-            "assistant responses before emitting Anthropic text."
-        ),
-    )
-    parser.add_argument(
         "--schema-log-path",
         default=CONFIG.schema_log_path,
         help="Optional JSONL path for redacted offered-tool schema inventories.",
@@ -2436,16 +1746,6 @@ def main() -> int:
         help=(
             "Optional comma-separated tool names to forward for harness/reviewer "
             "requests. Use '*' to forward every offered reviewer tool."
-        ),
-    )
-    parser.add_argument(
-        "--harness-force-submit-after-tool-results",
-        type=int,
-        default=CONFIG.harness_force_submit_after_tool_results,
-        help=(
-            "When >0, reviewer/harness requests that have already completed this "
-            "many non-harness tool results are closed out by forwarding only the "
-            "harness submit tool."
         ),
     )
     parser.add_argument(
@@ -2500,17 +1800,9 @@ def main() -> int:
     CONFIG.tool_mode = parse_tool_mode(args.tool_mode)
     CONFIG.tool_allowlist = parse_csv(args.tool_allowlist)
     CONFIG.tool_validation = parse_tool_validation(args.tool_validation)
-    CONFIG.tool_repair = parse_tool_repair(args.tool_repair)
-    CONFIG.force_mentioned_tool = parse_bool(args.force_mentioned_tool)
-    CONFIG.parse_text_tool_calls = parse_bool(args.parse_text_tool_calls)
-    CONFIG.strip_thinking_text = parse_bool(args.strip_thinking_text)
     CONFIG.schema_log_path = args.schema_log_path
     CONFIG.harness_tools = parse_csv(args.harness_tools)
     CONFIG.harness_tool_allowlist = parse_csv(args.harness_tool_allowlist)
-    CONFIG.harness_force_submit_after_tool_results = max(
-        0,
-        args.harness_force_submit_after_tool_results,
-    )
     CONFIG.claude_science_compat = parse_bool(args.claude_science_compat)
     CONFIG.mtplx_avoid_background_bypass = parse_bool(args.mtplx_avoid_background_bypass)
     CONFIG.mtplx_background_max_tokens = args.mtplx_background_max_tokens
@@ -2532,15 +1824,9 @@ def main() -> int:
         f"tool_mode={CONFIG.tool_mode}; "
         f"tool_allowlist={CONFIG.tool_allowlist or '<all>'}; "
         f"tool_validation={CONFIG.tool_validation}; "
-        f"tool_repair={CONFIG.tool_repair}; "
-        f"force_mentioned_tool={CONFIG.force_mentioned_tool}; "
-        f"parse_text_tool_calls={CONFIG.parse_text_tool_calls}; "
-        f"strip_thinking_text={CONFIG.strip_thinking_text}; "
         f"schema_log_path={CONFIG.schema_log_path or '<disabled>'}; "
         f"harness_tools={CONFIG.harness_tools}; "
         f"harness_tool_allowlist={CONFIG.harness_tool_allowlist or '<main allowlist>'}; "
-        "harness_force_submit_after_tool_results="
-        f"{CONFIG.harness_force_submit_after_tool_results}; "
         f"claude_science_compat={CONFIG.claude_science_compat}; "
         f"mtplx_avoid_background_bypass={CONFIG.mtplx_avoid_background_bypass}; "
         f"mtplx_background_max_tokens={CONFIG.mtplx_background_max_tokens}; "

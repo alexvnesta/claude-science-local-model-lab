@@ -24,8 +24,8 @@ repo cloneable, safe, and boring to audit.
 - `profiles/` contains shell env profiles for MTPLX/Qwen, generic local
   OpenAI-compatible backends, Ollama, and OpenRouter.
 - `tests/test_streaming_proxy.py` is the main regression suite for streaming,
-  tool-call filtering, schema validation, finite SSE close, and Qwen-style text
-  tool-call adapters.
+  tool-call filtering, schema validation, finite SSE close, request IDs, and
+  health metrics.
 - `docs/architecture.md` explains the request-shape broker model.
 - `docs/why-this-proxy.md` explains the Claude Science-specific value compared
   with Claude Code proxy prior art.
@@ -66,10 +66,8 @@ For provider checks, use `./scripts/doctor.sh`,
 `./scripts/smoke-openrouter.sh`, or `./scripts/smoke-ollama.sh`. Those scripts
 may source ignored env files, but they must not print secret values.
 
-For a live Claude Science run, follow `docs/verification-checklist.md`. A good
-public claim needs at least proxy logs showing `/v1/messages` traffic and local
-app evidence that foreground and reviewer frames completed. Keep raw evidence
-under `_local/`.
+For a live Claude Science run, follow `docs/verification-checklist.md`. Keep raw
+logs, app databases, prompts, tool outputs, and screenshots under `_local/`.
 
 ## Known Technical Debt
 

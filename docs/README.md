@@ -12,16 +12,12 @@ when you need a more specific reference.
 - [`architecture.md`](architecture.md): request-shape broker model, tool
   routing, schema validation, streaming, and observability design.
 - [`verification-checklist.md`](verification-checklist.md): checklist for
-  proving a live run, smoke testing, permissions, reviewers, and artifacts.
-- [`evidence-bundle.md`](evidence-bundle.md): public-safe summary of the TP53
-  demo evidence without private prompts, logs, or account state.
+  proving proxy routing, smoke testing, permissions, and reviewer/tool loops.
 
 ## Reference Docs
 
 - [`access.md`](access.md): Claude Science beta access and entitlement notes
   with official Anthropic references.
-- [`demo-capture.md`](demo-capture.md): how the public GIF and screenshots were
-  captured, plus known provider caveats.
 - [`prior-art-review.md`](prior-art-review.md): reviewed Claude Code proxy
   projects and what this repo borrows or deliberately does differently.
 - [`official-observability.md`](official-observability.md): what can be learned
@@ -29,6 +25,10 @@ when you need a more specific reference.
 - [`roadmap.md`](roadmap.md): next engineering work and known technical debt.
 
 ## Archive
+
+Archived files are historical lab notes. They may mention experiments, profiles,
+or model-rescue behavior that has since been removed; use the core docs above
+for the current proxy contract.
 
 - [`archive/initial-findings.md`](archive/initial-findings.md): chronological
   lab notes from early protocol discovery.

@@ -36,9 +36,10 @@ family above, alongside NVIDIA's public Claude Code integration documentation.
   foreground science-agent turns, hidden-tool analysis turns, and reviewer or
   harness turns such as `submit_output`.
 - It validates returned tool calls against the tool schemas Claude Science
-  offered for that specific request, with only narrow metadata repair.
+  offered for that specific request, without repairing model mistakes into
+  executable tool calls.
 - It includes regression tests for streaming, filtered tool calls, finite SSE
-  close, and observed Qwen reviewer text-tool-call variants.
+  close, request IDs, health metrics, and schema/name validation.
 
 ## Attribution Policy
 

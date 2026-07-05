@@ -53,11 +53,11 @@ Claude Science expects.
 | Request-shape routing | Separates `plain`, `tools_hidden`, `tool_agent`, and `harness` traffic instead of treating every request like one chat loop. |
 | Reviewer safety | Handles reviewer tools such as `submit_output` separately from foreground tools such as `python` and `save_artifacts`. |
 | Tool correctness | Validates returned tool calls against the exact schemas Claude Science offered on that request before emitting executable `tool_use`. |
-| Local-model adaptation | Repairs narrow observed Qwen/reviewer pseudo-tool-call text formats and filters malformed execution calls. |
+| Local-model boundary | Keeps pseudo-tool text visible as model output and only emits executable tool calls that match the offered tool names and schemas. |
 | Provider portability | Supports MTPLX/Qwen, Ollama, OpenRouter, and generic OpenAI-compatible backends through profiles. |
 | Model picker clarity | Advertises Claude-shaped aliases with human display names such as `MTPLX Qwen 27B Local`. |
 | Public-safe evidence | Logs redacted request IDs, request-kind counters, latency, retry counts, and tool-filter reasons without prompts or artifacts. |
-| Regression coverage | Tests streaming, heartbeat comments, schema validation, invalid tool filtering, request IDs, health metrics, and Qwen text-tool-call adapters. |
+| Regression coverage | Tests streaming, heartbeat comments, schema validation, invalid tool filtering, request IDs, and health metrics. |
 
 ## What Makes It Different From A Claude Code Proxy
 
@@ -73,8 +73,8 @@ as a foreground agent, or a local model hallucinating a Python/artifact call can
 break the scientific session even if ordinary chat still works.
 
 This repo therefore treats Claude Science request kind as the core abstraction.
-Provider selection, stream mode, tool adapters, and model-specific repairs hang
-off that classification.
+Provider selection, stream mode, and tool-routing rules hang off that
+classification.
 
 ## Where Other Projects Are Better
 
@@ -107,7 +107,7 @@ while gradually modularizing:
 - streaming;
 - tool/schema validation;
 - observability;
-- model-specific adapters.
+- provider/profile configuration.
 
 In short: preserve the Claude Science workbench experience, but make the model
 backend replaceable, inspectable, and easier to govern.

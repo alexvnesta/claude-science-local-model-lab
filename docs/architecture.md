@@ -66,31 +66,17 @@ HTTP payload. It therefore classifies requests from payload shape:
 Harness tools are configured separately with `PROXY_HARNESS_TOOLS` and bypass
 the normal science-agent allowlist. This matters because `submit_output` is not
 a user capability such as `bash`, `python`, or `web_search`; it is the app's
-structured reviewer handshake. A focused Qwen profile can safely expose
-`submit_output` to reviewer frames while still restricting the foreground agent
-to a small science-tool subset.
+structured reviewer handshake.
 
-Reviewer frames also need inspection tools. In live Qwen runs, forwarding only
-`submit_output` caused the reviewer to narrate or stall, because it wanted to
-inspect saved TSV/Markdown/PNG artifacts. The execution profile therefore uses
-`PROXY_HARNESS_TOOL_ALLOWLIST` to expose reviewer-scoped tools such as
-`repl`, `read_file`, `boundary`, `summary_query`, and
-`query_target_history` without exposing those same tools to the foreground
-agent. This fixed the main-agent/reviewer conflation: Qwen reviewer frames
-could read artifact versions and verify score math.
-
-Local models may then over-inspect. `PROXY_HARNESS_FORCE_SUBMIT_AFTER_TOOL_RESULTS`
-is an opt-in closeout guard: after a reviewer/harness conversation has already
-completed a configured number of non-harness tool results and has not submitted
-structured output, the proxy forwards only the harness tool on the next turn.
-This is intentionally profile-controlled because some models obey
-`tool_choice`, while others need the competing reviewer tools hidden during
-closeout.
+Reviewer frames may need inspection tools before they can produce a structured
+review. Explicit overrides can use `PROXY_HARNESS_TOOL_ALLOWLIST` to expose a
+small reviewer-scoped tool set, such as artifact readers or query helpers,
+without exposing those same tools to the foreground agent.
 
 ## Model Adaptation
 
 Model-specific behavior belongs in profiles, not in Claude Science launch
-logic. The MTPLX/Qwen profile is only the first known-good profile.
+logic. The MTPLX/Qwen profile is the first tested local profile.
 
 Useful profile dimensions:
 
@@ -119,54 +105,28 @@ Useful profile dimensions:
   only sees the allowlisted names and the response validator only accepts that
   same effective set.
 - Harness tools: `PROXY_HARNESS_TOOLS` are structural tools that bypass the
-  normal allowlist, currently `submit_output` by default. If a request forwards
-  exactly one harness tool, the proxy forces a named upstream `tool_choice` for
-  that tool so reviewer calls do not devolve into prose.
+  normal allowlist, currently `submit_output` by default. The proxy translates
+  Claude Science's explicit `tool_choice` when present, but it does not add a
+  harness-specific `tool_choice` when the app did not request one.
 - Harness tool allowlist: `PROXY_HARNESS_TOOL_ALLOWLIST` overrides the
   foreground allowlist for reviewer/harness requests. Use this when reviewers
   need inspection tools such as `repl` and `read_file` while the foreground
   agent should see only `python` and `save_artifacts`.
-- Harness closeout: `PROXY_HARNESS_FORCE_SUBMIT_AFTER_TOOL_RESULTS=N` hides
-  reviewer inspection tools and forwards only `submit_output` after `N`
-  completed non-harness reviewer tool results. This is useful for Qwen-style
-  local models that keep inspecting instead of submitting the final structured
-  review.
+- Claude Science compatibility: `PROXY_CLAUDE_SCIENCE_COMPAT=1` is an explicit
+  app-compat probe that normalizes OpenAI-style tool ids to `toolu_...` ids and
+  includes observed Claude Science `caller` metadata on emitted `tool_use`
+  blocks. Leave it off unless an app-side tool-loop proof shows that shape is
+  required for the current Claude Science build.
 - Tool validation: `schema` keeps Claude Science's offered tool schemas as the
   execution boundary. Returned tool calls are emitted only if the name was
   offered, arguments are a JSON object, and the object satisfies the advertised
   schema subset. `name` and `off` exist for debugging provider behavior.
-- Tool repair: `metadata` can fill missing `human_description` fields before
-  schema validation. This is intentionally limited to Claude Science's
-  descriptive metadata field and does not repair semantic required inputs such
-  as commands, code, file paths, environments, or artifact payloads.
-- Python sanity filters: execution profiles reject observed malformed local
-  model shapes such as `code` containing only an artifact filename, giant
-  single-line import blobs, or Claude Science app-tool calls such as
-  `skill({...})` smuggled into Python source.
-- Mentioned-tool forcing: `PROXY_FORCE_MENTIONED_TOOL=1` maps explicit latest
-  user wording such as "use/call/load the skill tool" or "call python to
-  create..." to a named upstream `tool_choice`. It does not infer tools from
-  topical words and is intended for focused Qwen probe profiles. When multiple
-  tools are explicitly mentioned, the first explicit mention wins; this avoids
-  forcing a later `save_artifacts` mention before the requested `python` call.
-- Hidden-tool guard: when `drop` mode hides non-reviewer tool schemas, the proxy
-  adds a system note telling the local model not to emit fake tool markup or
-  claim searches, code execution, file reads, or artifact creation.
-- Text-tool-call adaptation: Qwen can emit structured intentions as text, so the
-  analysis profile can convert narrow patterns back into Anthropic `tool_use`
-  blocks. Observed patterns currently covered by tests:
-  - `<tool_call>["submit_output", "{\"verdict\":\"pass\"}"]`
-  - `::submit_output::+json::{"verdict":"pass"}`
-  - fenced JSON when Claude Science offered exactly one tool
-  - `submit_output(verdict="pass", findings=[])`
-  - `[submit_output](submit_output(verdict='fail', findings=[]))`
-  - fenced reviewer JSON with preamble text, when `submit_output` is offered
-  - fenced OpenAI-style function JSON such as
-    `{"type":"function","name":"submit_output","arguments":{...}}`
-  - XML-ish Qwen blocks such as
-    `<tool_call><function=submit_output><parameter=verdict>pass</parameter>`
+- The proxy does not repair or reinterpret semantically bad tool calls. If a
+  model emits a tool call that is syntactically valid for the offered schema
+  but conceptually wrong, that remains model behavior to document outside the
+  transport layer.
 - Redacted schema capture: `PROXY_SCHEMA_LOG_PATH` writes JSONL inventories of
-  offered tool names and schema shapes for later adapter work. It deliberately
+  offered tool names and schema shapes for transport debugging. It deliberately
   excludes prompts, outputs, full descriptions, and tool results.
 
 ## Observability
@@ -183,7 +143,7 @@ response header.
 - Provider latency summaries by request kind.
 - Retry and upstream-error counts by HTTP status.
 - Tool-call filter counts by reason, for example `unknown_tool`,
-  `schema_invalid`, or `python_sanity`.
+  `schema_invalid`, or `bad_arguments`.
 
 It deliberately does not expose prompts, tool arguments, tool results, artifact
 contents, cookies, account state, or local app database paths.
@@ -197,21 +157,18 @@ invalid streamed tool filtering, full-JSON fallback, and finite connection
 close after `message_stop`. Tool arguments are still emitted only after final
 validation, not as unvalidated incremental app-visible deltas.
 
-MTPLX/Qwen buffered mode is the current known-good app path for short tool
-loops, but it can starve Claude Science of SSE events during long local
-generations. Live figure probes showed the app can disconnect before a long
-buffered response returns. MTPLX/Qwen direct mode has not yet produced a
+MTPLX/Qwen buffered mode is the current default app path for short tool loops,
+but it can starve Claude Science of SSE events during long local generations.
+Live app probes showed the app can disconnect before a long buffered response
+returns. MTPLX/Qwen direct mode has not yet produced a
 verified persisted app-side tool loop, so it remains a development target rather
 than the default profile.
 
 The next reliability project is fresh-session reviewer verification across
-several local models. Qwen's reviewer output is usable but model-specific enough
-that adapters should remain profile-controlled and regression-tested per model
-family.
+several local and hosted models. Reviewer policy should stay outside the
+transport proxy unless current traces prove a generalized app/protocol issue.
 
 Execution tools should be profiled separately from discovery/reviewer tools.
-Direct isolated probes on Qwen 27B succeeded for `python` and `save_artifacts`
-when the execution profile exposed only those tools and forced the named tool.
 Full Claude Science execution additionally requires a local permission grant.
 The UI path is "Permissions -> Allow -> for this conversation"; the scripted
 equivalent is `scripts/resolve-input-request.py --scope conversation`. A real

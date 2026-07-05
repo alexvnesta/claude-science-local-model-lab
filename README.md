@@ -99,7 +99,7 @@ PROXY_PROFILE=profiles/openrouter.env.example \
 ./scripts/start-proxy-detached.sh
 ```
 
-Use a paid/private-capacity route for full Claude Science UI demos when
+Use a paid/private-capacity route for full Claude Science UI verification when
 possible. Free OpenRouter routes are useful for smoke tests but can fail large
 Claude Science foreground prompts with upstream capacity errors.
 
@@ -154,35 +154,12 @@ For MTPLX/Qwen, Ollama, and other provider-specific notes, see
 ## Current Proof
 
 The gateway path works with an isolated Claude Science app copy and MTPLX/Qwen
-or OpenRouter backends. Verified paths include deterministic UI replies, short
-analysis prompts, focused tool loops, reviewer `submit_output`, `python` plus
-`save_artifacts` probes, OpenRouter/Gemma artifact runs, local Qwen artifact
-runs, reviewer inspection-tool routing, and local/provider model-picker labels.
+or OpenRouter backends. Current deterministic proxy proof covers routing,
+streaming, request IDs, provider/profile wiring, and tool-call name/schema
+validation. Model behavior should be inspected as evidence, not repaired by the
+proxy.
 
-For a public-safe evidence summary, see
-[`docs/evidence-bundle.md`](docs/evidence-bundle.md).
-
-Primary Qwen/MTPLX workflow GIF:
-
-![Claude Science running a TP53 TCGA-BRCA analysis through local MTPLX Qwen 27B](docs/assets/qwen-mtplx-tp53-workflow-demo.gif)
-
-The GIF shows the isolated app using the `MTPLX Qwen 27B Local` model label,
-conversation-scoped Python permission, a reviewer finding, corrective artifact
-creation, a final reviewer pass, and the generated TP53 TCGA-BRCA plot opened
-in split view.
-
-Public source notebook for the TP53 analysis:
-[`examples/tp53_brca_xena_analysis.ipynb`](examples/tp53_brca_xena_analysis.ipynb).
-The demo uses the public UCSC Xena TCGA-BRCA `HiSeqV2` expression matrix:
-[`TCGA.BRCA.sampleMap/HiSeqV2.gz`](https://tcga.xenahubs.net/download/TCGA.BRCA.sampleMap/HiSeqV2.gz).
-
-<img src="docs/assets/tp53-notebook-source-1.png" alt="Notebook source for loading TCGA-BRCA TP53 expression data" width="900">
-
-<img src="docs/assets/tp53-notebook-source-2.png" alt="Notebook source for plotting TP53 expression and writing artifacts" width="900">
-
-For detailed evidence, caveats, and capture notes, see
-[`docs/evidence-bundle.md`](docs/evidence-bundle.md),
-[`docs/demo-capture.md`](docs/demo-capture.md), and
+For detailed verification steps and caveats, see
 [`docs/verification-checklist.md`](docs/verification-checklist.md).
 
 ## Repo Map
@@ -190,11 +167,11 @@ For detailed evidence, caveats, and capture notes, see
 - `proxy/`: dependency-light Anthropic Messages to OpenAI-compatible proxy.
   `observability.py` and `request_shape.py` are the first extracted modules;
   the conversion/server code is still being split out incrementally.
-- `profiles/`: provider and experiment profiles.
+- `profiles/`: provider profiles.
 - `scripts/`: launch, status, smoke-test, and app verification helpers.
-- `tests/`: regression tests for streaming, tool filtering, and adapters.
+- `tests/`: regression tests for streaming, tool filtering, and translation.
 - `docs/`: start with the [`docs/README.md`](docs/README.md) index for setup,
-  architecture, evidence, verification, roadmap, and archived lab notes.
+  architecture, verification, roadmap, and archived lab notes.
 - `AGENTS.md`: orientation for humans or agents cloning the repo.
 - `_local/`: ignored local-only runtime area.
 
