@@ -245,8 +245,8 @@ This repo's unique implementation work is the Claude Science local lab:
 - Configurable profiles for generic local backends and MTPLX/Qwen.
 - Request classification as `plain`, `tools_hidden`, `tool_agent`, or
   `harness`.
-- Separate harness tool list, defaulting to `submit_output`, that extends the
-  normal tool allowlist for structural app handshakes.
+- Separate harness tool classification list for structural app handshakes. The
+  normal tool allowlist still controls forwarding.
 - Schema validation against forwarded client-tool schemas.
 - Redacted schema inventory logging and `/healthz` metrics for adapter
   development without prompts or tool payloads.

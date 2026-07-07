@@ -56,6 +56,9 @@ have to be identical; `UPSTREAM_OPENAI_MODEL` just needs to match the running
 server.
 
 Use `profiles/mtplx-qwen.env.example` as the maintained MTPLX profile.
+Claude Science profiles explicitly advertise `claude-opus-4-8` as an alias for
+the selected upstream model. The proxy core itself defaults to advertising only
+the upstream model ID.
 
 Observed in local Qwen transport probes:
 
@@ -64,9 +67,13 @@ Observed in local Qwen transport probes:
 - It may split tool work across several calls or emit malformed tool arguments.
   Treat those as model/tool-use failures unless the proxy transport malformed
   the offered schema or returned tool result.
-- Reviewer frames use the foreground allowlist plus `PROXY_HARNESS_TOOLS`.
-  Keep reviewer-specific tool-inventory experiments outside the proxy core
-  until a trace shows a general transport requirement.
+- `PROXY_HARNESS_TOOLS` classifies structural reviewer tools such as
+  `submit_output`; it does not expand `PROXY_TOOL_ALLOWLIST`. If a focused
+  profile uses an allowlist, add `submit_output` there explicitly when reviewer
+  submission should be forwarded.
+- `PROXY_CLAUDE_SCIENCE_COMPAT` is explicit and defaults to `0` in the example
+  profiles. Set it to `1` only for app-side tool-execution probes that need
+  Claude Science-compatible `toolu_...` IDs and `caller` metadata.
 - Local model loops are slow. Keep live app probes short and verify persisted
   app database state before treating a UI answer as proof of execution.
 - MTPLX/Qwen profiles still default to `PROXY_STREAM_MODE=buffered` because

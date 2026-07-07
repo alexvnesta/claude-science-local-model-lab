@@ -89,17 +89,9 @@ DEFAULT_TOOL_MODE = _env("PROXY_TOOL_MODE", "pass")
 DEFAULT_TOOL_ALLOWLIST = _env("PROXY_TOOL_ALLOWLIST", "")
 DEFAULT_TOOL_VALIDATION = _env("PROXY_TOOL_VALIDATION", "schema")
 DEFAULT_SCHEMA_LOG_PATH = _env("PROXY_SCHEMA_LOG_PATH", "")
-DEFAULT_HARNESS_TOOLS = _env("PROXY_HARNESS_TOOLS", "submit_output")
+DEFAULT_HARNESS_TOOLS = _env("PROXY_HARNESS_TOOLS", "")
 DEFAULT_CLAUDE_SCIENCE_COMPAT = _env("PROXY_CLAUDE_SCIENCE_COMPAT", "0")
-DEFAULT_MTPLX_AVOID_BACKGROUND_BYPASS = _env("PROXY_MTPLX_AVOID_BACKGROUND_BYPASS", "0")
-DEFAULT_MTPLX_BACKGROUND_MAX_TOKENS = int(_env("PROXY_MTPLX_BACKGROUND_MAX_TOKENS", "48"))
-DEFAULT_MTPLX_BACKGROUND_NO_HISTORY_MAX_CHARS = int(
-    _env("PROXY_MTPLX_BACKGROUND_NO_HISTORY_MAX_CHARS", "4096")
-)
-DEFAULT_ADVERTISED_MODELS = _env(
-    "PROXY_ADVERTISED_MODELS",
-    f"claude-opus-4-8,{DEFAULT_UPSTREAM_MODEL}",
-)
+DEFAULT_ADVERTISED_MODELS = _env("PROXY_ADVERTISED_MODELS", DEFAULT_UPSTREAM_MODEL)
 DEFAULT_MODEL_DISPLAY_NAMES = _env("PROXY_MODEL_DISPLAY_NAMES", "")
 DEFAULT_UPSTREAM_HTTP_REFERER = _env_first(
     ("UPSTREAM_HTTP_REFERER", "OPENROUTER_HTTP_REFERER"),
@@ -129,9 +121,6 @@ class ProxyConfig:
         schema_log_path: str,
         harness_tools: list[str],
         claude_science_compat: bool,
-        mtplx_avoid_background_bypass: bool,
-        mtplx_background_max_tokens: int,
-        mtplx_background_no_history_max_chars: int,
         advertised_models: list[str],
         model_display_names: dict[str, str],
     ) -> None:
@@ -150,9 +139,6 @@ class ProxyConfig:
         self.schema_log_path = schema_log_path
         self.harness_tools = harness_tools
         self.claude_science_compat = claude_science_compat
-        self.mtplx_avoid_background_bypass = mtplx_avoid_background_bypass
-        self.mtplx_background_max_tokens = mtplx_background_max_tokens
-        self.mtplx_background_no_history_max_chars = mtplx_background_no_history_max_chars
         self.advertised_models = advertised_models
         self.model_display_names = model_display_names
 
@@ -173,9 +159,6 @@ CONFIG = ProxyConfig(
     "",
     [],
     False,
-    False,
-    48,
-    4096,
     [],
     {},
 )
@@ -255,9 +238,6 @@ CONFIG.tool_validation = parse_tool_validation(DEFAULT_TOOL_VALIDATION)
 CONFIG.schema_log_path = DEFAULT_SCHEMA_LOG_PATH
 CONFIG.harness_tools = parse_csv(DEFAULT_HARNESS_TOOLS)
 CONFIG.claude_science_compat = parse_bool(DEFAULT_CLAUDE_SCIENCE_COMPAT)
-CONFIG.mtplx_avoid_background_bypass = parse_bool(DEFAULT_MTPLX_AVOID_BACKGROUND_BYPASS)
-CONFIG.mtplx_background_max_tokens = DEFAULT_MTPLX_BACKGROUND_MAX_TOKENS
-CONFIG.mtplx_background_no_history_max_chars = DEFAULT_MTPLX_BACKGROUND_NO_HISTORY_MAX_CHARS
 CONFIG.model_display_names = parse_model_display_names(DEFAULT_MODEL_DISPLAY_NAMES)
 CONFIG.stream_heartbeat_seconds = max(0.0, DEFAULT_STREAM_HEARTBEAT_SECONDS)
 
@@ -373,65 +353,6 @@ def user_text_without_tool_results(message: dict[str, Any]) -> str:
         if not (isinstance(block, dict) and block.get("type") == "tool_result")
     ]
     return block_text(kept)
-
-
-def openai_message_roles(request: dict[str, Any]) -> list[str]:
-    roles: list[str] = []
-    for message in request.get("messages") or []:
-        if isinstance(message, dict):
-            role = message.get("role")
-            if role:
-                roles.append(str(role))
-    return roles
-
-
-def openai_messages_text_len(request: dict[str, Any]) -> int:
-    total = 0
-    for message in request.get("messages") or []:
-        if isinstance(message, dict):
-            total += len(block_text(message.get("content")))
-    return total
-
-
-def mtplx_background_risk(request: dict[str, Any]) -> dict[str, Any]:
-    try:
-        max_tokens = int(request.get("max_tokens") or 0)
-    except (TypeError, ValueError):
-        max_tokens = 0
-    roles = openai_message_roles(request)
-    text_chars = openai_messages_text_len(request)
-    small_max_tokens = max_tokens <= CONFIG.mtplx_background_max_tokens
-    no_history = roles in (["system", "user"], ["developer", "user"])
-    short_no_history = (
-        no_history
-        and text_chars <= CONFIG.mtplx_background_no_history_max_chars
-    )
-    has_system_prompt = any(role in {"system", "developer"} for role in roles)
-    reasons: list[str] = []
-    if small_max_tokens:
-        reasons.append("small_max_tokens")
-    if short_no_history:
-        reasons.append("short_no_history")
-    if small_max_tokens and has_system_prompt:
-        reasons.append("system_mismatch_possible")
-    if request.get("tools"):
-        reasons.append("tools_present")
-    return {
-        "risk": bool(small_max_tokens and (short_no_history or has_system_prompt)),
-        "max_tokens": max_tokens,
-        "roles": roles,
-        "text_chars": text_chars,
-        "reasons": reasons,
-    }
-
-
-def apply_mtplx_background_bypass_guard(request: dict[str, Any]) -> dict[str, Any]:
-    risk = mtplx_background_risk(request)
-    if CONFIG.mtplx_avoid_background_bypass and risk["risk"]:
-        floor = CONFIG.mtplx_background_max_tokens + 1
-        request["max_tokens"] = max(int(request.get("max_tokens") or 0), floor)
-        risk["adjusted_max_tokens"] = request["max_tokens"]
-    return risk
 
 
 def assistant_message_from_blocks(message: dict[str, Any]) -> dict[str, Any]:
@@ -586,9 +507,8 @@ def tool_names(payload: dict[str, Any]) -> list[str]:
 
 
 def effective_tool_allowlist(payload: dict[str, Any]) -> set[str] | None:
-    harness_tools = set(CONFIG.harness_tools)
     if CONFIG.tool_allowlist:
-        return set(CONFIG.tool_allowlist) | harness_tools
+        return set(CONFIG.tool_allowlist)
     return None
 
 
@@ -1536,9 +1456,6 @@ class Handler(BaseHTTPRequestHandler):
                     "schema_log_path": CONFIG.schema_log_path,
                     "harness_tools": CONFIG.harness_tools,
                     "claude_science_compat": CONFIG.claude_science_compat,
-                    "mtplx_avoid_background_bypass": CONFIG.mtplx_avoid_background_bypass,
-                    "mtplx_background_max_tokens": CONFIG.mtplx_background_max_tokens,
-                    "mtplx_background_no_history_max_chars": CONFIG.mtplx_background_no_history_max_chars,
                     "model_display_names": CONFIG.model_display_names,
                     "metrics": METRICS.snapshot(),
                 },
@@ -1591,7 +1508,6 @@ class Handler(BaseHTTPRequestHandler):
             stream_requested = bool(payload.get("stream"))
             log_tool_schema_inventory(payload)
             request = anthropic_to_openai(payload, stream=stream_requested)
-            mtplx_background = apply_mtplx_background_bypass_guard(request)
             schemas = tool_schema_map(payload)
             active_stream_mode = CONFIG.stream_mode if stream_requested else "nonstream"
             request_shape = build_request_shape(
@@ -1615,11 +1531,7 @@ class Handler(BaseHTTPRequestHandler):
                 f"upstream_tools={shape['upstream_tools']} "
                 f"tool_choice={shape['tool_choice']} "
                 f"requested_max_tokens={shape['requested_max_tokens']} "
-                f"upstream_max_tokens={shape['upstream_max_tokens']} "
-                f"mtplx_background_risk={mtplx_background['risk']} "
-                f"mtplx_background_reasons={mtplx_background['reasons']} "
-                f"mtplx_roles={mtplx_background['roles']} "
-                f"mtplx_text_chars={mtplx_background['text_chars']}",
+                f"upstream_max_tokens={shape['upstream_max_tokens']}",
                 request_id=request_id,
             )
             if stream_requested and CONFIG.stream_mode == "direct":
@@ -1740,32 +1652,12 @@ def main() -> int:
     parser.add_argument(
         "--harness-tools",
         default=",".join(CONFIG.harness_tools),
-        help="Comma-separated structural harness tools that extend the agent allowlist.",
+        help="Comma-separated structural harness tool names used for request classification.",
     )
     parser.add_argument(
         "--claude-science-compat",
         default="1" if CONFIG.claude_science_compat else "0",
         help="Emit Claude Science execution-compatible tool_use metadata.",
-    )
-    parser.add_argument(
-        "--mtplx-avoid-background-bypass",
-        default="1" if CONFIG.mtplx_avoid_background_bypass else "0",
-        help=(
-            "When enabled, raise small MTPLX background-risk requests above the "
-            "MTPLX background cutoff so they queue instead of returning session_busy."
-        ),
-    )
-    parser.add_argument(
-        "--mtplx-background-max-tokens",
-        type=int,
-        default=CONFIG.mtplx_background_max_tokens,
-        help="MTPLX background classifier max_tokens cutoff; default matches MTPLX's 48-token cutoff.",
-    )
-    parser.add_argument(
-        "--mtplx-background-no-history-max-chars",
-        type=int,
-        default=CONFIG.mtplx_background_no_history_max_chars,
-        help="MTPLX short no-history background classifier character cutoff.",
     )
     parser.add_argument(
         "--advertised-models",
@@ -1797,9 +1689,6 @@ def main() -> int:
     CONFIG.schema_log_path = args.schema_log_path
     CONFIG.harness_tools = parse_csv(args.harness_tools)
     CONFIG.claude_science_compat = parse_bool(args.claude_science_compat)
-    CONFIG.mtplx_avoid_background_bypass = parse_bool(args.mtplx_avoid_background_bypass)
-    CONFIG.mtplx_background_max_tokens = args.mtplx_background_max_tokens
-    CONFIG.mtplx_background_no_history_max_chars = args.mtplx_background_no_history_max_chars
     CONFIG.advertised_models = parse_csv(args.advertised_models)
     if CONFIG.upstream_model not in CONFIG.advertised_models:
         CONFIG.advertised_models.append(CONFIG.upstream_model)
@@ -1820,9 +1709,6 @@ def main() -> int:
         f"schema_log_path={CONFIG.schema_log_path or '<disabled>'}; "
         f"harness_tools={CONFIG.harness_tools}; "
         f"claude_science_compat={CONFIG.claude_science_compat}; "
-        f"mtplx_avoid_background_bypass={CONFIG.mtplx_avoid_background_bypass}; "
-        f"mtplx_background_max_tokens={CONFIG.mtplx_background_max_tokens}; "
-        f"mtplx_background_no_history_max_chars={CONFIG.mtplx_background_no_history_max_chars}; "
         f"advertised_models={CONFIG.advertised_models}; "
         f"model_display_names={CONFIG.model_display_names}"
     )

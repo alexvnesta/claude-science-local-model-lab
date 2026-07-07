@@ -23,3 +23,46 @@ load_proxy_profile() {
   fi
 }
 
+proxy_profile_override_vars() {
+  cat <<'VARS'
+UPSTREAM_OPENAI_BASE_URL
+UPSTREAM_OPENAI_MODEL
+UPSTREAM_API_KEY
+PROXY_PROVIDER_NAME
+PROXY_HOST
+PROXY_PORT
+PROXY_REQUEST_TIMEOUT
+PROXY_MAX_TOKENS_CAP
+PROXY_UPSTREAM_RETRIES
+PROXY_UPSTREAM_RETRY_DELAY
+PROXY_STREAM_MODE
+PROXY_STREAM_HEARTBEAT_SECONDS
+PROXY_TOOL_MODE
+PROXY_TOOL_ALLOWLIST
+PROXY_TOOL_VALIDATION
+PROXY_SCHEMA_LOG_PATH
+PROXY_HARNESS_TOOLS
+PROXY_CLAUDE_SCIENCE_COMPAT
+PROXY_ADVERTISED_MODELS
+PROXY_MODEL_DISPLAY_NAMES
+VARS
+}
+
+capture_proxy_profile_overrides() {
+  local name
+  for name in $(proxy_profile_override_vars); do
+    eval "CALLER_${name}_SET=\"\${${name}+x}\""
+    eval "CALLER_${name}_VALUE=\"\${${name}-}\""
+  done
+}
+
+restore_proxy_profile_overrides() {
+  local name set_var value_var
+  for name in $(proxy_profile_override_vars); do
+    set_var="CALLER_${name}_SET"
+    value_var="CALLER_${name}_VALUE"
+    if [[ -n "${!set_var:-}" ]]; then
+      export "$name=${!value_var}"
+    fi
+  done
+}

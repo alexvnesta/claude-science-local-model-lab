@@ -10,6 +10,7 @@ import os
 import socket
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -82,32 +83,6 @@ class FakeOpenAIHandler(BaseHTTPRequestHandler):
         payload = json.loads(self.rfile.read(length).decode("utf-8"))
         messages = payload.get("messages") or []
         prompt = json.dumps(messages)
-        if not payload.get("stream") and "check mtplx background guard" in prompt:
-            self._json(
-                200,
-                {
-                    "choices": [
-                        {
-                            "message": {
-                                "role": "assistant",
-                                "content": json.dumps(
-                                    {
-                                        "max_tokens": payload.get("max_tokens"),
-                                        "roles": [
-                                            message.get("role")
-                                            for message in messages
-                                            if isinstance(message, dict)
-                                        ],
-                                    }
-                                ),
-                            },
-                            "finish_reason": "stop",
-                        }
-                    ],
-                    "usage": {"prompt_tokens": 4, "completion_tokens": 2},
-                },
-            )
-            return
         if not payload.get("stream") and "check upstream api key alias" in prompt:
             self._json(
                 200,
@@ -1170,7 +1145,7 @@ def assert_drop_mode_rejects_unforwarded_tool_calls(proxy_port: int) -> None:
     assert metrics["tool_filters_by_reason"].get("no_tools_offered", 0) >= 1, metrics
 
 
-def assert_harness_tools_extend_general_allowlist(proxy_port: int) -> None:
+def assert_harness_tools_do_not_extend_general_allowlist(proxy_port: int) -> None:
     raw = post_json(
         f"http://127.0.0.1:{proxy_port}/v1/messages",
         {
@@ -1182,7 +1157,9 @@ def assert_harness_tools_extend_general_allowlist(proxy_port: int) -> None:
     )
     payload = json.loads(raw)
     upstream_seen = json.loads(payload["content"][0]["text"])
-    assert upstream_seen["tool_names"] == ["search_skills", "submit_output"], upstream_seen
+    assert upstream_seen["tool_names"] == ["search_skills"], upstream_seen
+    metrics = get_json(f"http://127.0.0.1:{proxy_port}/healthz")["metrics"]
+    assert metrics["messages_by_kind"].get("harness", 0) >= 1, metrics
 
 
 def assert_nonstream(proxy_port: int) -> None:
@@ -1363,31 +1340,21 @@ def assert_custom_model_display_names(proxy_port: int) -> None:
     assert model["display_name"] == "MTPLX Qwen 27B Local", model
 
 
-def assert_mtplx_background_guard(proxy_port: int) -> None:
-    raw = post_json(
-        f"http://127.0.0.1:{proxy_port}/v1/messages",
-        {
-            "model": "claude-opus-4-8",
-            "system": "Tiny helper system prompt.",
-            "max_tokens": 24,
-            "messages": [{"role": "user", "content": "check mtplx background guard"}],
-        },
-    )
-    payload = json.loads(raw)
-    content = json.loads(payload["content"][0]["text"])
-    assert content["max_tokens"] == 49, payload
-    assert content["roles"] == ["system", "user"], payload
+def assert_bare_core_advertises_upstream_model_only(proxy_port: int) -> None:
+    payload = get_json(f"http://127.0.0.1:{proxy_port}/v1/models?limit=1000")
+    ids = [item["id"] for item in payload["data"]]
+    assert ids == ["fake-model"], payload
 
 
 def assert_upstream_env_aliases(proxy_port: int) -> None:
     payload = get_json(f"http://127.0.0.1:{proxy_port}/v1/models?limit=1000")
     ids = [item["id"] for item in payload["data"]]
-    assert ids == ["claude-opus-4-8", "fake-model"], payload
+    assert ids == ["fake-model"], payload
 
     raw = post_json(
         f"http://127.0.0.1:{proxy_port}/v1/messages",
         {
-            "model": "claude-opus-4-8",
+            "model": "fake-model",
             "max_tokens": 24,
             "messages": [{"role": "user", "content": "check upstream api key alias"}],
         },
@@ -1475,6 +1442,53 @@ def start_proxy_env_alias_process(
     )
 
 
+def start_run_proxy_profile_override_process(
+    fake_port: int,
+    proxy_port: int,
+) -> tuple[subprocess.Popen[bytes], Path]:
+    local_dir = ROOT / "_local"
+    local_dir.mkdir(exist_ok=True)
+    handle = tempfile.NamedTemporaryFile(
+        "w",
+        encoding="utf-8",
+        dir=local_dir,
+        prefix="test-profile-",
+        suffix=".env",
+        delete=False,
+    )
+    profile_path = Path(handle.name)
+    with handle:
+        handle.write(
+            "\n".join(
+                [
+                    "PROXY_PROVIDER_NAME=openai-compatible",
+                    "PROXY_STREAM_MODE=buffered",
+                    "PROXY_TOOL_MODE=drop",
+                    "PROXY_CLAUDE_SCIENCE_COMPAT=0",
+                    "",
+                ]
+            )
+        )
+    env = os.environ.copy()
+    env["PROXY_PROFILE"] = str(profile_path)
+    env["UPSTREAM_OPENAI_BASE_URL"] = f"http://127.0.0.1:{fake_port}/v1"
+    env["UPSTREAM_OPENAI_MODEL"] = "fake-model"
+    env["UPSTREAM_API_KEY"] = "profile-override-key"
+    env["PROXY_HOST"] = "127.0.0.1"
+    env["PROXY_PORT"] = str(proxy_port)
+    env["PROXY_CLAUDE_SCIENCE_COMPAT"] = "1"
+    return (
+        subprocess.Popen(
+            [str(ROOT / "scripts" / "run-proxy.sh")],
+            cwd=ROOT,
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        ),
+        profile_path,
+    )
+
+
 def main() -> int:
     fake_server, fake_port = start_fake_server()
     proxy_port = free_port()
@@ -1517,6 +1531,27 @@ def main() -> int:
         except subprocess.TimeoutExpired:
             alias_proc.kill()
 
+    profile_override_proxy_port = free_port()
+    profile_override_proc, profile_override_path = start_run_proxy_profile_override_process(
+        fake_port,
+        profile_override_proxy_port,
+    )
+    try:
+        wait_for_proxy(profile_override_proxy_port, profile_override_proc)
+        health = get_json(f"http://127.0.0.1:{profile_override_proxy_port}/healthz")
+        assert health["claude_science_compat"] is True, health
+        assert health["advertised_models"] == ["fake-model"], health
+        assert health["stream_mode"] == "buffered", health
+        assert health["tool_mode"] == "drop", health
+        assert_bare_core_advertises_upstream_model_only(profile_override_proxy_port)
+    finally:
+        profile_override_proc.terminate()
+        try:
+            profile_override_proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            profile_override_proc.kill()
+        profile_override_path.unlink(missing_ok=True)
+
     display_proxy_port = free_port()
     display_proc = start_proxy_process(
         fake_port,
@@ -1536,23 +1571,6 @@ def main() -> int:
             display_proc.wait(timeout=5)
         except subprocess.TimeoutExpired:
             display_proc.kill()
-
-    mtplx_guard_proxy_port = free_port()
-    mtplx_guard_proc = start_proxy_process(
-        fake_port,
-        mtplx_guard_proxy_port,
-        "drop",
-        ["--mtplx-avoid-background-bypass", "1"],
-    )
-    try:
-        wait_for_proxy(mtplx_guard_proxy_port, mtplx_guard_proc)
-        assert_mtplx_background_guard(mtplx_guard_proxy_port)
-    finally:
-        mtplx_guard_proc.terminate()
-        try:
-            mtplx_guard_proc.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            mtplx_guard_proc.kill()
 
     pass_proxy_port = free_port()
     pass_proc = start_proxy_process(
@@ -1587,12 +1605,12 @@ def main() -> int:
         fake_port,
         allowlist_proxy_port,
         "pass",
-        ["--tool-allowlist", "search_skills"],
+        ["--tool-allowlist", "search_skills", "--harness-tools", "submit_output"],
     )
     try:
         wait_for_proxy(allowlist_proxy_port, allowlist_proc)
         assert_tool_allowlist(allowlist_proxy_port)
-        assert_harness_tools_extend_general_allowlist(allowlist_proxy_port)
+        assert_harness_tools_do_not_extend_general_allowlist(allowlist_proxy_port)
     finally:
         allowlist_proc.terminate()
         try:

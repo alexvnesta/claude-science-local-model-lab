@@ -4,7 +4,9 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck disable=SC1091
 source "$ROOT/scripts/lib.sh"
+capture_proxy_profile_overrides
 load_proxy_profile "$ROOT"
+restore_proxy_profile_overrides
 
 mkdir -p "$ROOT/_local"
 PID_FILE="$ROOT/_local/proxy.pid"

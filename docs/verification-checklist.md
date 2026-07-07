@@ -61,7 +61,10 @@ Expected:
 - `/healthz` shows the intended `stream_mode`, `tool_mode`,
   `stream_heartbeat_seconds`, `tool_allowlist`, `tool_validation`, and optional
   `schema_log_path` values.
-- `/healthz` shows `harness_tools`, normally `["submit_output"]`.
+- `/healthz` shows `harness_tools`; Claude Science profiles normally set this
+  to `["submit_output"]`.
+- `/healthz` shows `claude_science_compat`. Treat `true` as an explicit app
+  compatibility setting, not as model-output repair.
 - `/healthz.metrics` shows request counts by kind and stream mode, provider
   latency by kind, retry/error counts, and tool-filter reason counts. It should
   not include prompt text, tool arguments, tool results, account state, or
@@ -128,19 +131,17 @@ Expected:
 - The Claude Science UI renders `LOCAL MODEL OK`.
 - `_local/proxy.log` shows `POST /v1/messages` for the same interaction.
 - The proxy log shows the upstream model, requested token count, capped token
-  count, request `kind`, request ID, stream mode, MTPLX background-risk fields,
-  and upstream completion time.
-- For MTPLX, `session_busy` means MTPLX classified a small helper/reviewer-style
-  call as background while foreground generation was active or queued. With
-  `PROXY_MTPLX_AVOID_BACKGROUND_BYPASS=1`, risk-shaped calls are raised above
-  MTPLX's 48-token background cutoff so they queue instead of returning an
-  immediate 503. Persistent `session_busy` after that points to a non-guarded
-  background source or a saturated backend.
+  count, request `kind`, request ID, stream mode, and upstream completion time.
+- For MTPLX, `session_busy` is treated as an upstream retryable response. The
+  proxy does not mutate request shape or token counts to work around MTPLX
+  background scheduling.
 
 For public screenshots or GIFs, also confirm:
 
 - The visible model label comes from `PROXY_MODEL_DISPLAY_NAMES` and matches
   the provider being demonstrated.
+- Any Claude-shaped model alias, such as `claude-opus-4-8`, comes from the
+  selected profile or explicit environment, not an implicit proxy-core default.
 - The app does not show an upstream-capacity retry, `unavailable` state, or an
   old failed frame.
 - The proxy log for the captured turn shows the same provider and request ID.
@@ -179,15 +180,18 @@ Expected:
 - Native Anthropic server tools without `input_schema` should not be forwarded
   as OpenAI function tools. If such a tool is the only offered tool, the
   upstream request should contain no `tools` and no `tool_choice`.
-- Reviewer/harness calls should log `kind=harness` and forward `submit_output`
-  even if it is absent from `PROXY_TOOL_ALLOWLIST`. If Claude Science sends an
-  explicit `tool_choice`, the proxy should forward it only when the target tool
-  survived the effective allowlist. The proxy should not invent a
+- Reviewer/harness calls should log `kind=harness` when Claude Science offers a
+  tool listed in `PROXY_HARNESS_TOOLS`.
+- `PROXY_HARNESS_TOOLS` must not bypass `PROXY_TOOL_ALLOWLIST`. If Claude
+  Science sends an explicit `tool_choice`, the proxy should forward it only when
+  the target tool survived ordinary forwarding. The proxy should not invent a
   harness-specific `tool_choice` to force reviewer submission.
 - Reviewer/harness calls use the same forwarded tool surface as the foreground
-  request plus `PROXY_HARNESS_TOOLS`. If a model only succeeds with a separate
-  reviewer-specific tool set, record that as model/profile evidence instead of
-  adding hidden proxy policy.
+  request. If a model only succeeds with a separate reviewer-specific tool set,
+  record that as model/profile evidence instead of adding hidden proxy policy.
+- If `PROXY_CLAUDE_SCIENCE_COMPAT=1`, emitted tool-use blocks should use
+  `toolu_...` IDs and include `caller: {"type":"direct"}`. This should not
+  change whether a malformed or unallowlisted tool call is filtered.
 - When `PROXY_SCHEMA_LOG_PATH` is set, `_local/tool-schema-capture.jsonl` should
   receive one redacted inventory per tool-offering request. Keep this file out
   of git and use it to tune provider-specific tool adapters.
@@ -210,10 +214,8 @@ MTPLX/Qwen. It needs more work before it replaces buffered mode. Until then:
 - Disable verifier for long foreground experiments when isolating main-agent
   behavior.
 - Avoid running old processing frames concurrently with fresh probes.
-- If `session_busy` appears, inspect `_local/proxy.log` for
-  `mtplx_background_risk=True`, `mtplx_background_reasons`, and
-  `upstream_max_tokens=49`. A risky call still going upstream at `<=48` means the
-  guard is not enabled for that proxy process.
+- If `session_busy` appears repeatedly, inspect provider capacity and
+  concurrency first; the proxy should not paper over it with request mutation.
 - Treat successful direct proxy calls as formatting evidence only unless the
   isolated app database shows persisted `frame_messages`, `execution_log`, and
   artifact rows.

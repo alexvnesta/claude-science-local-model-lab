@@ -63,12 +63,11 @@ HTTP payload. It therefore classifies requests from payload shape:
   from the local model.
 - `plain`: no tools were offered.
 
-Harness tools are configured separately with `PROXY_HARNESS_TOOLS` and extend
-the normal science-agent allowlist when present. This matters because
-`submit_output` is not a user capability such as `bash`, `python`, or
-`web_search`; it is the app's structured reviewer handshake. Treat reviewer
-quality as model behavior unless a current trace proves a general transport
-issue.
+Harness tools are named separately with `PROXY_HARNESS_TOOLS` for request
+classification and observability. They do not bypass `PROXY_TOOL_ALLOWLIST`.
+If a profile uses an allowlist and must forward `submit_output`, include
+`submit_output` in that allowlist explicitly. Treat reviewer quality as model
+behavior unless a current trace proves a general transport issue.
 
 ## Model Adaptation
 
@@ -81,11 +80,13 @@ Useful profile dimensions:
 - Provider identity: `PROXY_PROVIDER_NAME` labels MTPLX, Ollama, OpenRouter, or
   a generic OpenAI-compatible backend in health output and logs without
   exposing credentials.
-- Advertised Claude alias, usually `claude-opus-4-8`, plus the real local model.
+- Advertised model IDs. The proxy core defaults to the upstream model only;
+  Claude Science profiles explicitly add a Claude-shaped alias such as
+  `claude-opus-4-8` when the app needs it.
 - Display-name mapping: `PROXY_MODEL_DISPLAY_NAMES` controls the labels returned
-  by `/v1/models`. Claude Science's `/api/models` route filters non-`claude-`
-  IDs and slug-like lowercase display names, so the reliable local pattern is a
-  Claude-shaped alias ID plus a human label such as `MTPLX Qwen 27B Local`.
+  by `/v1/models`. Claude Science's `/api/models` route has been observed to
+  prefer Claude-shaped alias IDs plus human labels such as
+  `MTPLX Qwen 27B Local`; keep that choice in profiles.
 - Request timeout.
 - `max_tokens` cap.
 - Stream mode: `direct` for true upstream SSE bridging or `buffered` for local
@@ -104,12 +105,18 @@ Useful profile dimensions:
   tools. Schema capture still records the full offered inventory, but the model
   only sees the allowlisted names and the response validator only accepts that
   same effective set.
-- Harness tools: `PROXY_HARNESS_TOOLS` are structural tools that extend the
-  normal allowlist, currently `submit_output` by default. The proxy translates
-  Claude Science's explicit `tool_choice` when present, but it does not add a
-  harness-specific `tool_choice` when the app did not request one. There is no
-  separate reviewer-only tool surface in the proxy core; if a model needs a
-  different tool inventory, record that as profile or evaluation evidence.
+- Harness tools: `PROXY_HARNESS_TOOLS` identify structural tools such as
+  `submit_output` so matching requests log as `harness`. They do not extend the
+  normal allowlist. The proxy translates Claude Science's explicit
+  `tool_choice` when present, but only if the chosen tool survived ordinary
+  forwarding. There is no separate reviewer-only tool surface in the proxy core;
+  if a model needs a different tool inventory, record that as profile or
+  evaluation evidence.
+- Claude Science compatibility metadata:
+  `PROXY_CLAUDE_SCIENCE_COMPAT=1` normalizes emitted tool-use IDs to
+  Anthropic-like `toolu_...` values and includes the observed
+  `caller: {"type":"direct"}` metadata on tool-use blocks. Keep it explicit in
+  profiles or live probes; do not use it to repair malformed model tool calls.
 - Tool validation: `schema` keeps the forwarded client-tool schemas as the
   execution boundary. Returned tool calls are emitted only if the name survived
   forwarding, arguments are a JSON object, and the object satisfies the

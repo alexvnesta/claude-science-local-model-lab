@@ -55,7 +55,7 @@ Claude Science expects.
 | Tool correctness | Validates returned tool calls against the effective forwarded client-tool schemas before emitting executable `tool_use`. |
 | Local-model adaptation | Keeps model-specific behavior in provider profiles and validates executable tool calls at the schema boundary. |
 | Provider portability | Supports MTPLX/Qwen, Ollama, OpenRouter, and generic OpenAI-compatible backends through profiles. |
-| Model picker clarity | Advertises Claude-shaped aliases with human display names such as `MTPLX Qwen 27B Local`. |
+| Model picker clarity | Profiles can advertise Claude-shaped aliases with human display names such as `MTPLX Qwen 27B Local` when the app needs them. |
 | Public-safe evidence | Logs redacted request IDs, request-kind counters, latency, retry counts, and tool-filter reasons without prompts or artifacts. |
 | Regression coverage | Tests streaming, heartbeat comments, schema validation, invalid tool filtering, request IDs, health metrics, and allowlist behavior. |
 

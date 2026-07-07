@@ -6,8 +6,8 @@ This proxy is in a useful state for a public research lab, but live app claims
 should still be backed by a fresh checklist run. The deterministic suite covers
 the fragile proxy parts: streaming conversion, direct-stream idle heartbeats,
 finite SSE close, request ID response headers, tool-call filtering, schema
-validation, structural harness-tool allowlist extension, native/server-tool
-non-forwarding, and redacted health metrics.
+validation, structural harness request classification, native/server-tool
+non-forwarding, strict allowlist behavior, and redacted health metrics.
 
 It is not yet a polished production gateway. The main risks are long-running
 streaming behavior, the size of the single proxy file, and the fact that
