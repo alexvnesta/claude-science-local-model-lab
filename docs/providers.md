@@ -195,7 +195,7 @@ Provider checklist:
   path; long buffered generations can starve Claude Science of events.
 - Use `PROXY_TOOL_MODE=drop` for prose-only model tests.
 - Use `PROXY_TOOL_MODE=pass`, `PROXY_TOOL_VALIDATION=schema`, and a focused
-  `PROXY_TOOL_ALLOWLIST` for live tool-loop experiments.
+  `PROXY_TOOL_ALLOWLIST` for live tool-loop verification runs.
 
 Official references:
 

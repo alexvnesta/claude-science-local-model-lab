@@ -171,7 +171,7 @@ For detailed verification steps and caveats, see
 - `scripts/`: launch, status, smoke-test, and app verification helpers.
 - `tests/`: regression tests for streaming, tool filtering, and translation.
 - `docs/`: start with the [`docs/README.md`](docs/README.md) index for setup,
-  architecture, verification, roadmap, and archived lab notes.
+  architecture, provider notes, verification, and roadmap.
 - `AGENTS.md`: orientation for humans or agents cloning the repo.
 - `_local/`: ignored local-only runtime area.
 
