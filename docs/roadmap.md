@@ -2,20 +2,21 @@
 
 ## Current Assessment
 
-This proxy is useful but still early. It proves that an isolated Claude Science
-app copy can route Anthropic-style model calls through a local proxy into an
-OpenAI-compatible backend, and it has real tests around the fragile transport
-parts: streaming conversion, direct-stream idle heartbeats, finite SSE close,
-request ID response headers, tool-call filtering, schema validation,
-reviewer-specific tool allowlists, and redacted health metrics.
+This proxy is in a useful state for a public research lab, but live app claims
+should still be backed by a fresh checklist run. The deterministic suite covers
+the fragile proxy parts: streaming conversion, direct-stream idle heartbeats,
+finite SSE close, request ID response headers, tool-call filtering, schema
+validation, structural harness-tool allowlist extension, native/server-tool
+non-forwarding, and redacted health metrics.
 
 It is not yet a polished production gateway. The main risks are long-running
 streaming behavior, the size of the single proxy file, and the fact that
 provider support is still profile-based rather than a first-class provider
-abstraction. The first module split is underway (`request_shape.py` and
-`observability.py`), but the translation/server state machine is still mostly
-in one file. Model-specific capability and reviewer quality should be evaluated
-outside the proxy core.
+abstraction. The first
+module split is underway (`request_shape.py` and `observability.py`), but the
+translation/server state machine is still mostly in one file. Local Qwen 27B
+can complete short direct answers, but full Claude Science tool loops remain
+slower and less reliable than hosted Claude.
 
 ## Highest-Value Refinements
 
@@ -23,7 +24,7 @@ outside the proxy core.
 
    The test suite now covers direct OpenAI SSE to Anthropic SSE conversion,
    idle heartbeat comments, request-ID headers, finite close, and buffered
-   validation of upstream streamed tool-call argument deltas. The default
+   validation of upstream streamed tool-call argument deltas. The known-good
    MTPLX/Qwen app path is still buffered for short loops. Direct mode still
    needs app-side proof for long generations, safe app-visible incremental tool
    arguments, cancellation under real browser/app disconnects, and
@@ -41,19 +42,19 @@ outside the proxy core.
 3. Continue provider transport cleanup.
 
    OpenRouter and Ollama now have provider smoke scripts, `UPSTREAM_*` aliases,
-   a small `doctor` command, explicit `PROXY_PROVIDER_NAME`, profile defaults
-   for direct-stream heartbeats, and launcher pass-through for reviewer
-   allowlist flags. The next useful layer is a typed config file, more provider-specific
-   defaults, and optional live-provider smoke coverage for additional
-   OpenAI-compatible services.
+   a small `doctor` command, explicit `PROXY_PROVIDER_NAME`, and profile
+   defaults for direct-stream heartbeats. The next useful layer is a typed
+   config file, more provider-specific defaults, and optional live-provider
+   smoke coverage for additional OpenAI-compatible services.
 
 4. Keep request-shape routing separate from provider transport.
 
    Claude Science request kinds (`plain`, `tools_hidden`, `tool_agent`,
    `harness`) should remain the broker's core abstraction. Provider selection,
-   stream mode, and tool exposure choices should hang off that classification
-   rather than being mixed into app launch scripts. Keep foreground tool
-   allowlists and reviewer tool allowlists separate.
+   stream mode, and tool adapter choices should hang off that classification
+   rather than being mixed into app launch scripts. Keep reviewer-specific
+   inspection experiments outside proxy core until a trace proves a general
+   transport requirement.
 
 5. Improve observability without leaking data.
 
@@ -68,10 +69,10 @@ outside the proxy core.
    Add `pyproject.toml`, an installable console entrypoint, and a typed config
    file format while preserving the simple shell profile path for quick tests.
 
-7. Keep quick-start docs short.
+7. Separate evidence logs from quick-start docs.
 
-   The README should stay cloneable and focused on proxy setup. Long app-path
-   archaeology belongs outside the proxy core.
+   The README should stay cloneable and short. Long frame IDs, app-path proof,
+   and version archaeology should live in evidence docs or release notes.
 
 8. Broaden provider smoke tests beyond Ollama and OpenRouter.
 
@@ -79,16 +80,16 @@ outside the proxy core.
    smoke paths for vLLM, LM Studio, llama.cpp server, and other providers when
    their local endpoints or API keys are present.
 
-9. Keep reviewer budget and stop-policy work outside the proxy core.
+9. Measure reviewer budget needs before adding policy controls.
 
-   Some models improve reviewer quality when artifact-inspection tools are
-   visible, but can then over-inspect instead of submitting structured output.
-   Treat this as future reviewer-policy work outside the transport proxy unless
-   a transport bug is proven.
+    Live reviewer probes showed reviewer quality can improve when artifact
+    inspection tools are visible, but reviewers may then over-inspect and delay
+    `submit_output`. Do not add proxy-side reviewer forcing without fresh
+    evidence that it is a transport requirement rather than model behavior.
 
 10. Add local process durability checks.
 
-    Long local/reviewer loops can leave the isolated app or upstream model
+    Long Qwen/reviewer loops can leave the isolated app or upstream model
     server unavailable. Add a post-run health monitor that reports whether
     official Claude Science, isolated Claude Science, proxy, and upstream model
     ports are still listening, plus a clean recovery recipe.

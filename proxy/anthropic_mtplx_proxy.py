@@ -90,7 +90,6 @@ DEFAULT_TOOL_ALLOWLIST = _env("PROXY_TOOL_ALLOWLIST", "")
 DEFAULT_TOOL_VALIDATION = _env("PROXY_TOOL_VALIDATION", "schema")
 DEFAULT_SCHEMA_LOG_PATH = _env("PROXY_SCHEMA_LOG_PATH", "")
 DEFAULT_HARNESS_TOOLS = _env("PROXY_HARNESS_TOOLS", "submit_output")
-DEFAULT_HARNESS_TOOL_ALLOWLIST = _env("PROXY_HARNESS_TOOL_ALLOWLIST", "")
 DEFAULT_CLAUDE_SCIENCE_COMPAT = _env("PROXY_CLAUDE_SCIENCE_COMPAT", "0")
 DEFAULT_MTPLX_AVOID_BACKGROUND_BYPASS = _env("PROXY_MTPLX_AVOID_BACKGROUND_BYPASS", "0")
 DEFAULT_MTPLX_BACKGROUND_MAX_TOKENS = int(_env("PROXY_MTPLX_BACKGROUND_MAX_TOKENS", "48"))
@@ -129,7 +128,6 @@ class ProxyConfig:
         tool_validation: str,
         schema_log_path: str,
         harness_tools: list[str],
-        harness_tool_allowlist: list[str],
         claude_science_compat: bool,
         mtplx_avoid_background_bypass: bool,
         mtplx_background_max_tokens: int,
@@ -151,7 +149,6 @@ class ProxyConfig:
         self.tool_validation = tool_validation
         self.schema_log_path = schema_log_path
         self.harness_tools = harness_tools
-        self.harness_tool_allowlist = harness_tool_allowlist
         self.claude_science_compat = claude_science_compat
         self.mtplx_avoid_background_bypass = mtplx_avoid_background_bypass
         self.mtplx_background_max_tokens = mtplx_background_max_tokens
@@ -174,7 +171,6 @@ CONFIG = ProxyConfig(
     [],
     "schema",
     "",
-    [],
     [],
     False,
     False,
@@ -258,7 +254,6 @@ CONFIG.tool_allowlist = parse_csv(DEFAULT_TOOL_ALLOWLIST)
 CONFIG.tool_validation = parse_tool_validation(DEFAULT_TOOL_VALIDATION)
 CONFIG.schema_log_path = DEFAULT_SCHEMA_LOG_PATH
 CONFIG.harness_tools = parse_csv(DEFAULT_HARNESS_TOOLS)
-CONFIG.harness_tool_allowlist = parse_csv(DEFAULT_HARNESS_TOOL_ALLOWLIST)
 CONFIG.claude_science_compat = parse_bool(DEFAULT_CLAUDE_SCIENCE_COMPAT)
 CONFIG.mtplx_avoid_background_bypass = parse_bool(DEFAULT_MTPLX_AVOID_BACKGROUND_BYPASS)
 CONFIG.mtplx_background_max_tokens = DEFAULT_MTPLX_BACKGROUND_MAX_TOKENS
@@ -473,6 +468,17 @@ def assistant_message_from_blocks(message: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
+def client_tool_name_and_schema(tool: Any) -> tuple[str, dict[str, Any]] | None:
+    """Return the schema for Claude client tools that OpenAI can represent."""
+    if not isinstance(tool, dict):
+        return None
+    name = tool.get("name")
+    schema = tool.get("input_schema")
+    if isinstance(name, str) and name and isinstance(schema, dict):
+        return name, schema
+    return None
+
+
 def anthropic_to_openai(payload: dict[str, Any], stream: bool = False) -> dict[str, Any]:
     messages: list[dict[str, Any]] = []
 
@@ -507,9 +513,10 @@ def anthropic_to_openai(payload: dict[str, Any], stream: bool = False) -> dict[s
     tools = []
     allowlist = effective_tool_allowlist(payload)
     for tool in payload.get("tools") or []:
-        if not isinstance(tool, dict):
+        client_tool = client_tool_name_and_schema(tool)
+        if client_tool is None:
             continue
-        name = tool.get("name")
+        name, schema = client_tool
         if allowlist is not None and name not in allowlist:
             continue
         tools.append(
@@ -518,10 +525,16 @@ def anthropic_to_openai(payload: dict[str, Any], stream: bool = False) -> dict[s
                 "function": {
                     "name": name,
                     "description": tool.get("description") or "",
-                    "parameters": tool.get("input_schema") or {"type": "object"},
+                    "parameters": schema,
                 },
             }
         )
+    forwarded_names = [
+        tool["function"]["name"]
+        for tool in tools
+        if isinstance(tool.get("function"), dict)
+        and isinstance(tool["function"].get("name"), str)
+    ]
 
     requested_max_tokens = int(payload.get("max_tokens") or 1024)
     max_tokens = min(requested_max_tokens, CONFIG.max_tokens_cap)
@@ -539,25 +552,22 @@ def anthropic_to_openai(payload: dict[str, Any], stream: bool = False) -> dict[s
     if tools and CONFIG.tool_mode == "pass":
         request["tools"] = tools
 
-    forwarded_tool_names = {
-        tool["function"]["name"]
-        for tool in tools
-        if isinstance(tool.get("function"), dict)
-        and isinstance(tool["function"].get("name"), str)
-    }
     tool_choice = payload.get("tool_choice")
-    if isinstance(tool_choice, dict) and CONFIG.tool_mode == "pass" and forwarded_tool_names:
+    if isinstance(tool_choice, dict) and CONFIG.tool_mode == "pass" and forwarded_names:
         choice_type = tool_choice.get("type")
         if choice_type == "auto":
             request["tool_choice"] = "auto"
         elif choice_type == "any":
             request["tool_choice"] = "required"
-        elif choice_type == "tool" and tool_choice.get("name") in forwarded_tool_names:
+        elif (
+            choice_type == "tool"
+            and isinstance(tool_choice.get("name"), str)
+            and tool_choice["name"] in forwarded_names
+        ):
             request["tool_choice"] = {
                 "type": "function",
                 "function": {"name": tool_choice["name"]},
             }
-
     return request
 
 
@@ -577,13 +587,6 @@ def tool_names(payload: dict[str, Any]) -> list[str]:
 
 def effective_tool_allowlist(payload: dict[str, Any]) -> set[str] | None:
     harness_tools = set(CONFIG.harness_tools)
-    offered_names = set(tool_names(payload))
-    if offered_names & harness_tools and CONFIG.harness_tool_allowlist:
-        harness_allowlist = set(CONFIG.harness_tool_allowlist)
-        if "*" in harness_allowlist:
-            return None
-        return harness_allowlist | harness_tools
-
     if CONFIG.tool_allowlist:
         return set(CONFIG.tool_allowlist) | harness_tools
     return None
@@ -592,22 +595,21 @@ def effective_tool_allowlist(payload: dict[str, Any]) -> set[str] | None:
 def tool_schema_map(
     payload: dict[str, Any],
 ) -> dict[str, dict[str, Any]]:
+    if CONFIG.tool_mode != "pass":
+        return {}
     tools = payload.get("tools")
     if not isinstance(tools, list):
         return {}
     allowed = effective_tool_allowlist(payload)
     schemas: dict[str, dict[str, Any]] = {}
     for tool in tools:
-        if not isinstance(tool, dict):
+        client_tool = client_tool_name_and_schema(tool)
+        if client_tool is None:
             continue
-        name = tool.get("name")
+        name, schema = client_tool
         if allowed is not None and name not in allowed:
             continue
-        schema = tool.get("input_schema")
-        if isinstance(name, str) and name and isinstance(schema, dict):
-            schemas[name] = schema
-        elif isinstance(name, str) and name:
-            schemas[name] = {"type": "object"}
+        schemas[name] = schema
     return schemas
 
 
@@ -855,6 +857,7 @@ def unvalidated_tool_use_block(
         **({"caller": {"type": "direct"}} if CONFIG.claude_science_compat else {}),
     }
 
+
 def openai_to_anthropic(
     data: dict[str, Any],
     requested_model: str | None = None,
@@ -1047,7 +1050,7 @@ def iter_openai_stream_events(
         try:
             for chunk in iter_openai_stream(response, request_id=request_id):
                 events.put(("chunk", chunk))
-        except Exception as exc:  # noqa: BLE001 - converted after SSE headers are sent.
+        except BaseException as exc:  # noqa: BLE001 - re-raised in stream thread.
             events.put(("error", exc))
         finally:
             events.put(("done", None))
@@ -1532,7 +1535,6 @@ class Handler(BaseHTTPRequestHandler):
                     "tool_validation": CONFIG.tool_validation,
                     "schema_log_path": CONFIG.schema_log_path,
                     "harness_tools": CONFIG.harness_tools,
-                    "harness_tool_allowlist": CONFIG.harness_tool_allowlist,
                     "claude_science_compat": CONFIG.claude_science_compat,
                     "mtplx_avoid_background_bypass": CONFIG.mtplx_avoid_background_bypass,
                     "mtplx_background_max_tokens": CONFIG.mtplx_background_max_tokens,
@@ -1738,15 +1740,7 @@ def main() -> int:
     parser.add_argument(
         "--harness-tools",
         default=",".join(CONFIG.harness_tools),
-        help="Comma-separated structural harness tools that bypass the agent allowlist.",
-    )
-    parser.add_argument(
-        "--harness-tool-allowlist",
-        default=",".join(CONFIG.harness_tool_allowlist),
-        help=(
-            "Optional comma-separated tool names to forward for harness/reviewer "
-            "requests. Use '*' to forward every offered reviewer tool."
-        ),
+        help="Comma-separated structural harness tools that extend the agent allowlist.",
     )
     parser.add_argument(
         "--claude-science-compat",
@@ -1802,7 +1796,6 @@ def main() -> int:
     CONFIG.tool_validation = parse_tool_validation(args.tool_validation)
     CONFIG.schema_log_path = args.schema_log_path
     CONFIG.harness_tools = parse_csv(args.harness_tools)
-    CONFIG.harness_tool_allowlist = parse_csv(args.harness_tool_allowlist)
     CONFIG.claude_science_compat = parse_bool(args.claude_science_compat)
     CONFIG.mtplx_avoid_background_bypass = parse_bool(args.mtplx_avoid_background_bypass)
     CONFIG.mtplx_background_max_tokens = args.mtplx_background_max_tokens
@@ -1826,7 +1819,6 @@ def main() -> int:
         f"tool_validation={CONFIG.tool_validation}; "
         f"schema_log_path={CONFIG.schema_log_path or '<disabled>'}; "
         f"harness_tools={CONFIG.harness_tools}; "
-        f"harness_tool_allowlist={CONFIG.harness_tool_allowlist or '<main allowlist>'}; "
         f"claude_science_compat={CONFIG.claude_science_compat}; "
         f"mtplx_avoid_background_bypass={CONFIG.mtplx_avoid_background_bypass}; "
         f"mtplx_background_max_tokens={CONFIG.mtplx_background_max_tokens}; "

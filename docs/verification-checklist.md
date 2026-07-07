@@ -62,8 +62,6 @@ Expected:
   `stream_heartbeat_seconds`, `tool_allowlist`, `tool_validation`, and optional
   `schema_log_path` values.
 - `/healthz` shows `harness_tools`, normally `["submit_output"]`.
-- If the active profile sets them, `/healthz` also shows
-  `harness_tool_allowlist`.
 - `/healthz.metrics` shows request counts by kind and stream mode, provider
   latency by kind, retry/error counts, and tool-filter reason counts. It should
   not include prompt text, tool arguments, tool results, account state, or
@@ -95,7 +93,7 @@ request through the authenticated app API:
 ```bash
 scripts/submit-local-request.py \
   --project-id <project-id> \
-  "API path probe. Use search_skills once to search for proxy routing. After the tool result, answer with marker API_KIND_SEARCH_OK."
+  "API path probe. Use search_skills once to search for request-shape routing. After the tool result, answer with marker API_KIND_SEARCH_OK."
 ```
 
 The helper obtains a short-lived login cookie through `claude-science url`,
@@ -139,7 +137,7 @@ Expected:
   immediate 503. Persistent `session_busy` after that points to a non-guarded
   background source or a saturated backend.
 
-For screenshots or local debugging captures, also confirm:
+For public screenshots or GIFs, also confirm:
 
 - The visible model label comes from `PROXY_MODEL_DISPLAY_NAMES` and matches
   the provider being demonstrated.
@@ -154,81 +152,49 @@ Claude Science UI prompts to two `:free` models hit upstream 429 capacity
 responses. Treat that as a provider-capacity caveat, not as a proxy routing
 failure.
 
-## 6. Optional Tool-Loop Proof
+## 6. Minimal Live Transport Proof
 
-Use a fresh session when possible. Keep the prompt short and focused on
-transport shape, not scientific ability. For example:
+Use a fresh session when possible. Send a short deterministic prompt first:
 
 ```text
-For this proxy tool-loop test, use search_skills once to search for proxy
-routing. After the tool result, answer with marker API_KIND_SEARCH_OK.
+For this gateway test, reply with exactly LOCAL MODEL OK. Do not use tools.
 ```
 
 Expected:
 
-- The UI renders a substantive answer, not just a gateway echo.
+- The UI renders the expected answer, not a gateway echo.
 - The frame eventually reaches `completed` in the isolated SQLite database.
-- With `PROXY_TOOL_MODE=drop`, `_local/proxy.log` should show Claude Science
+- For tool-drop profiles, `_local/proxy.log` should show Claude Science
   tool schemas dropped before upstream, e.g. `tools=26 upstream_tools=0`.
-- In `PROXY_TOOL_MODE=drop`, tool-heavy prompts may still fail by claiming fake
-  tool use. Document that as a model failure; the proxy should not repair it.
+- In `PROXY_TOOL_MODE=drop`, document tool-heavy prompts that emit
+  `<anonymous_function>`, `<tool_call>`, XML function tags, or claims that
+  searches/files/code/artifacts were actually executed as model failures rather
+  than proxy transport failures.
 - In `PROXY_TOOL_MODE=pass` with `PROXY_TOOL_VALIDATION=schema`, tool-heavy
-  prompts should forward Claude Science tool schemas upstream, but returned tool
-  calls should be emitted only when they use an offered tool name and JSON-object
-  arguments that satisfy the offered schema. Unknown tools, malformed JSON args,
-  and missing required fields should be filtered rather than wrapped as
-  executable `tool_use`.
-- Missing `human_description`, malformed JSON args, and missing semantic fields
-  such as `command`, `code`, or `file_path` should be filtered rather than
-  repaired by the proxy.
-- If full-tool forwarding stalls, use a temporary `PROXY_TOOL_ALLOWLIST=...`
-  override and verify a single allowlisted tool loop before broadening.
-- For execution-tool probes, use explicit overrides such as
-  `PROXY_TOOL_ALLOWLIST=python,save_artifacts` and begin with single-tool prompts
-  for `python` or `save_artifacts`. Direct proxy success means the model
-  formatted the tool call; app-side success additionally requires a persisted
-  Claude Science `tool_result` and, for artifacts, a saved artifact version.
-- New app-side execution proofs can set `PROXY_CLAUDE_SCIENCE_COMPAT=1` when
-  the app requires `toolu_...` ids and `caller: {"type":"direct"}` metadata.
-  Older pre-compat frames with OpenAI-style `call_...` ids can still clear the
-  permission card and run Python, but they are poor recovery targets for
-  artifact-loop verification.
-- Reviewer/harness calls should log `kind=harness`, forward `submit_output`
-  even if it is absent from `PROXY_TOOL_ALLOWLIST`. The proxy should translate
-  explicit Claude Science `tool_choice` values, but it should not add a
-  harness-specific `tool_choice` when the app did not request one.
-- Reviewer/harness calls may need their own tool set. When a focused probe uses
-  `PROXY_HARNESS_TOOL_ALLOWLIST`, `/healthz` should show only the explicit
-  reviewer tools for that run plus `submit_output`. In reviewer logs,
-  `kind=harness` should show the corresponding forwarded tool count. This is a
-  profile override for inspection, not a model-specific rescue path.
+  prompts should forward schema-bearing Claude client tools upstream, but
+  returned tool calls should be emitted only when they use a forwarded tool name
+  and JSON-object arguments that satisfy that forwarded schema. Unknown tools,
+  malformed JSON args, and missing required fields should be filtered rather
+  than wrapped as executable `tool_use`.
+- Native Anthropic server tools without `input_schema` should not be forwarded
+  as OpenAI function tools. If such a tool is the only offered tool, the
+  upstream request should contain no `tools` and no `tool_choice`.
+- Reviewer/harness calls should log `kind=harness` and forward `submit_output`
+  even if it is absent from `PROXY_TOOL_ALLOWLIST`. If Claude Science sends an
+  explicit `tool_choice`, the proxy should forward it only when the target tool
+  survived the effective allowlist. The proxy should not invent a
+  harness-specific `tool_choice` to force reviewer submission.
+- Reviewer/harness calls use the same forwarded tool surface as the foreground
+  request plus `PROXY_HARNESS_TOOLS`. If a model only succeeds with a separate
+  reviewer-specific tool set, record that as model/profile evidence instead of
+  adding hidden proxy policy.
 - When `PROXY_SCHEMA_LOG_PATH` is set, `_local/tool-schema-capture.jsonl` should
   receive one redacted inventory per tool-offering request. Keep this file out
-  of git and use it to debug offered-tool and schema mismatches.
-- Python tool calls should be inline executable code, not filenames or
-  generated artifact paths. If a conceptually bad call satisfies the offered
-  tool schema, treat that as model behavior to document, not as a proxy
-  translation problem.
-- Reviewer status may still be model-specific. If it is inconclusive, document
-  the model failure first. Change the proxy only when current traces prove a
-  generalizable transport/format issue and the change has a regression test.
-  Reviewer pseudo-tool text is treated as model output, not as an executable
-  proxy repair.
-- A successful reviewer pass should show assistant `tool_use`, user
-  `tool_result`, and reviewer-frame `structured_output` in the isolated
-  SQLite database. A clean pass may not create a row in `verification_checks`;
-  the reviewer frame's `output_data.structured_output` is the durable evidence.
-- Strong app-path proof should show both the foreground frame and reviewer child
-  completing. For tool execution, the isolated app database should show matching
-  `frame_messages`, `tool_result`, `execution_log`, and artifact rows when
-  artifacts were requested.
-- If a local execution tool pauses on a permission card, resolving it with
-  conversation scope should clear `pending_input_requests` and create a matching
-  `execution_log` row. Keep permission evidence local and do not commit it.
+  of git and use it to tune provider-specific tool adapters.
 
 ## 6.1 Streaming Caveat For Long Tool Calls
 
-`PROXY_STREAM_MODE=buffered` is the default mode for short MTPLX/Qwen tool
+`PROXY_STREAM_MODE=buffered` is the known-good mode for short MTPLX/Qwen tool
 loops because Claude Science accepts the final Anthropic SSE shape. However, it
 does not emit incremental events while waiting for the upstream response. Long
 Qwen generations around one to two minutes can cause Claude Science to
@@ -241,7 +207,7 @@ It still does not provide a verified app-side persisted tool loop for
 MTPLX/Qwen. It needs more work before it replaces buffered mode. Until then:
 
 - Keep execution probes short and focused.
-- Disable verifier for long foreground probes when isolating main-agent
+- Disable verifier for long foreground experiments when isolating main-agent
   behavior.
 - Avoid running old processing frames concurrently with fresh probes.
 - If `session_busy` appears, inspect `_local/proxy.log` for

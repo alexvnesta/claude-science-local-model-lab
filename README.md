@@ -14,10 +14,10 @@ Traditional Claude Code proxies mostly translate one chat/tool loop from an
 Anthropic-shaped client to another provider. Claude Science is different: in
 observed runs it sends separate foreground-agent, hidden-tool, tool-agent, and
 reviewer/harness requests. This proxy preserves those request kinds, keeps
-reviewer tools such as `submit_output` separate from foreground tools such as
-`python` and `save_artifacts`, validates returned tool calls against the exact
-schemas Claude Science offered, and runs against a copied local app so the
-official Claude Science install stays untouched.
+structural reviewer tools such as `submit_output` explicit, validates returned
+tool calls against the forwarded client-tool schemas Claude Science offered,
+and runs against a copied local app so the official Claude Science install
+stays untouched.
 
 If you only want the architecture distinction, read
 [`docs/why-this-proxy.md`](docs/why-this-proxy.md).
@@ -37,12 +37,12 @@ Most public proxies target Claude Code-style chat. This one is narrower: it
 adapts the request shapes Claude Science actually emits.
 
 - Brokers foreground, hidden-tool, tool-agent, and reviewer/harness requests.
-- Keeps reviewer tools such as `submit_output` separate from foreground tools
-  such as `python` and `save_artifacts`.
+- Keeps structural reviewer tools such as `submit_output` explicit without
+  adding reviewer-only rescue policy.
 - Translates Anthropic tool blocks to OpenAI-compatible tool messages and
   translates OpenAI tool calls back.
-- Validates returned tool calls against the exact schemas Claude Science
-  offered on that request.
+- Validates returned tool calls against the effective forwarded client-tool
+  schemas for that request.
 - Supports local/provider profiles, model-picker labels, redacted observability,
   and regression tests.
 
@@ -99,7 +99,7 @@ PROXY_PROFILE=profiles/openrouter.env.example \
 ./scripts/start-proxy-detached.sh
 ```
 
-Use a paid/private-capacity route for full Claude Science UI verification when
+Use a paid/private-capacity route for full Claude Science UI demos when
 possible. Free OpenRouter routes are useful for smoke tests but can fail large
 Claude Science foreground prompts with upstream capacity errors.
 
@@ -151,15 +151,16 @@ If routing is local, `_local/proxy.log` will show `POST /v1/messages`.
 For MTPLX/Qwen, Ollama, and other provider-specific notes, see
 [`docs/providers.md`](docs/providers.md).
 
-## Current Proof
+## Current Proxy Evidence
 
-The gateway path works with an isolated Claude Science app copy and MTPLX/Qwen
-or OpenRouter backends. Current deterministic proxy proof covers routing,
-streaming, request IDs, provider/profile wiring, and tool-call name/schema
-validation. Model behavior should be inspected as evidence, not repaired by the
-proxy.
+The gateway path is intended for an isolated Claude Science app copy and
+OpenAI-compatible backends such as MTPLX/Qwen or OpenRouter. Current
+deterministic proxy evidence covers provider smoke tests, request-kind routing,
+schema validation, explicit allowlists, reviewer `submit_output` handling, and
+local/provider model-picker labels. Treat model scientific performance as
+separate eval evidence, not as a proxy claim.
 
-For detailed verification steps and caveats, see
+For detailed transport checks, caveats, and expected live-run signals, see
 [`docs/verification-checklist.md`](docs/verification-checklist.md).
 
 ## Repo Map
@@ -167,11 +168,11 @@ For detailed verification steps and caveats, see
 - `proxy/`: dependency-light Anthropic Messages to OpenAI-compatible proxy.
   `observability.py` and `request_shape.py` are the first extracted modules;
   the conversion/server code is still being split out incrementally.
-- `profiles/`: provider profiles.
+- `profiles/`: provider/backend profiles.
 - `scripts/`: launch, status, smoke-test, and app verification helpers.
-- `tests/`: regression tests for streaming, tool filtering, and translation.
+- `tests/`: regression tests for streaming, tool filtering, and adapters.
 - `docs/`: start with the [`docs/README.md`](docs/README.md) index for setup,
-  architecture, provider notes, verification, and roadmap.
+  architecture, evidence, verification, roadmap, and archived lab notes.
 - `AGENTS.md`: orientation for humans or agents cloning the repo.
 - `_local/`: ignored local-only runtime area.
 

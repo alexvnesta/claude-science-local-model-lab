@@ -15,10 +15,10 @@ The gap this repo addresses is narrower: Claude Science appears to exercise a
 Claude-like Messages path, but it also emits distinct foreground, hidden-tool,
 and reviewer/harness request shapes. The reviewer/harness path needs structural
 tools such as `submit_output` even when the foreground science-agent allowlist
-is intentionally small. In live Qwen runs, reviewer frames also needed their
-own artifact-inspection allowlist, separate from the foreground execution
-allowlist. None of the reviewed projects directly targets Claude Science's
-foreground/reviewer split.
+is intentionally small. Live Qwen runs raised the question of whether reviewer
+frames benefit from artifact-inspection tools, but that is model/profile
+evidence rather than a proxy-core transport requirement. None of the reviewed
+projects directly targets Claude Science's foreground/reviewer split.
 
 ## Reviewed Projects
 
@@ -67,7 +67,7 @@ Takeaway for this repo:
 This is the strongest streaming-state-machine reference. Our proxy currently
 keeps the implementation dependency-free and simpler, with configurable
 `direct` versus `buffered` streaming plus tested direct-stream heartbeats
-because MTPLX/Qwen direct streaming was not the default app path in testing.
+because MTPLX/Qwen direct streaming was not the known-good app path in testing.
 
 ### routatic/proxy
 
@@ -245,19 +245,18 @@ This repo's unique implementation work is the Claude Science local lab:
 - Configurable profiles for generic local backends and MTPLX/Qwen.
 - Request classification as `plain`, `tools_hidden`, `tool_agent`, or
   `harness`.
-- Separate harness tool list, defaulting to `submit_output`, that bypasses the
-  foreground tool allowlist.
-- Reviewer-specific tool allowlist.
-- Schema validation against the request's offered tool schemas.
-- Redacted schema inventory logging and `/healthz` metrics for transport
-  debugging without prompts or tool payloads.
+- Separate harness tool list, defaulting to `submit_output`, that extends the
+  normal tool allowlist for structural app handshakes.
+- Schema validation against forwarded client-tool schemas.
+- Redacted schema inventory logging and `/healthz` metrics for adapter
+  development without prompts or tool payloads.
 - Regression tests for streaming, heartbeat comments, request IDs, filtering,
-  finite SSE close, and health metrics.
+  finite SSE close, health metrics, and allowlist behavior.
 
 ## Credit Checklist
 
 - Keep `NOTICE.md` in the repository root.
-- Keep this review updated when adding new translation behavior based on prior art.
+- Keep this review updated when adding a new adapter based on prior art.
 - Do not copy third-party source without carrying its license and attribution.
 - Do not copy AGPL implementation code into this MIT repository without an
   explicit relicensing or licensing change.

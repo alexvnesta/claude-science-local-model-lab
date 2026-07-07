@@ -12,7 +12,7 @@ when you need a more specific reference.
 - [`architecture.md`](architecture.md): request-shape broker model, tool
   routing, schema validation, streaming, and observability design.
 - [`verification-checklist.md`](verification-checklist.md): checklist for
-  proving proxy routing, smoke testing, permissions, and reviewer/tool loops.
+  proving a live run, smoke testing, permissions, reviewers, and artifacts.
 
 ## Reference Docs
 

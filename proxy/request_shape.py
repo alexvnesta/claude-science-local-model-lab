@@ -1,7 +1,7 @@
 """Claude Science request-shape classification.
 
 The local proxy treats Claude Science traffic as brokered request kinds first.
-Provider transport, streaming mode, and tool exposure should hang off this
+Provider transport, streaming mode, and profile settings should hang off this
 classification instead of deciding behavior from launch scripts alone.
 """
 
