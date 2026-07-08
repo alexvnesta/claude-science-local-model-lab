@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import http.cookiejar
 import json
+import os
 import subprocess
 import sys
 import urllib.error
@@ -27,14 +28,24 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("prompt", help="Prompt text to submit.")
     parser.add_argument("--project-id", required=True, help="Claude Science project id.")
-    parser.add_argument("--app-port", default="18765", help="Local Claude Science port.")
+    parser.add_argument(
+        "--app-port",
+        default=os.environ.get("CLAUDE_SCIENCE_LOCAL_PORT", "18765"),
+        help="Local Claude Science port.",
+    )
     parser.add_argument(
         "--app-cli",
         default=str(ROOT / "_local/Claude Science.app/Contents/Resources/bin/claude-science"),
         help="Path to the copied claude-science CLI.",
     )
-    parser.add_argument("--data-dir", default=str(ROOT / "_local/data"))
-    parser.add_argument("--config", default=str(ROOT / "_local/config.toml"))
+    parser.add_argument(
+        "--data-dir",
+        default=os.environ.get("CLAUDE_SCIENCE_LOCAL_DATA_DIR", str(ROOT / "_local/data")),
+    )
+    parser.add_argument(
+        "--config",
+        default=os.environ.get("CLAUDE_SCIENCE_LOCAL_CONFIG", str(ROOT / "_local/config.toml")),
+    )
     parser.add_argument("--model", default="claude-opus-4-8")
     parser.add_argument("--effort", default="default")
     parser.add_argument("--verifier-mode", choices=("on", "off"), default="on")

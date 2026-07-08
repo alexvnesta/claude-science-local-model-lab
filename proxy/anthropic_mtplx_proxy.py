@@ -288,6 +288,12 @@ def is_client_disconnect(exc: BaseException) -> bool:
     return False
 
 
+def upstream_transport_error_reason(exc: BaseException) -> str:
+    if isinstance(exc, TimeoutError) or "timed out" in str(exc).lower():
+        return "timeout"
+    return "os_error"
+
+
 class UpstreamHTTPError(Exception):
     def __init__(self, status: int, detail: str) -> None:
         super().__init__(detail)
@@ -1571,6 +1577,7 @@ class Handler(BaseHTTPRequestHandler):
             if is_client_disconnect(exc):
                 log("client disconnected before response completed", request_id=request_id)
                 return
+            METRICS.record_upstream_transport_error(reason=upstream_transport_error_reason(exc))
             log(f"os error: {exc}\n{traceback.format_exc()}", request_id=request_id)
             self._json(
                 500,

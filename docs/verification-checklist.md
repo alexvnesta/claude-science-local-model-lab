@@ -66,9 +66,9 @@ Expected:
 - `/healthz` shows `claude_science_compat`. Treat `true` as an explicit app
   compatibility setting, not as model-output repair.
 - `/healthz.metrics` shows request counts by kind and stream mode, provider
-  latency by kind, retry/error counts, and tool-filter reason counts. It should
-  not include prompt text, tool arguments, tool results, account state, or
-  artifact contents.
+  latency by kind, retry/error counts, upstream transport error counts, and
+  tool-filter reason counts. It should not include prompt text, tool arguments,
+  tool results, account state, or artifact contents.
 - `/v1/messages/count_tokens` returns an `input_tokens` value.
 - `/v1/messages` returns a message containing `mtplx proxy ok`.
 - `./scripts/test-streaming-proxy.sh` passes streamed text, direct-stream
@@ -81,6 +81,12 @@ Expected:
 ```bash
 ./scripts/launch-claude-science-local.sh
 ```
+
+If the app should use a non-default data dir, config file, or port, set
+`CLAUDE_SCIENCE_LOCAL_DATA_DIR`, `CLAUDE_SCIENCE_LOCAL_CONFIG`, and
+`CLAUDE_SCIENCE_LOCAL_PORT` first. The launcher, `local-url`, submit, resolve,
+and stop helpers share the data/config defaults; the launcher plus submit and
+resolve helpers also read the port default.
 
 In another terminal:
 

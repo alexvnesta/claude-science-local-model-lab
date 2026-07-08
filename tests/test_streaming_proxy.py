@@ -419,6 +419,21 @@ class FakeOpenAIHandler(BaseHTTPRequestHandler):
                 },
             )
             return
+        if "slow nonstream timeout" in prompt:
+            time.sleep(0.5)
+            self._json(
+                200,
+                {
+                    "choices": [
+                        {
+                            "message": {"role": "assistant", "content": "too late"},
+                            "finish_reason": "stop",
+                        }
+                    ],
+                },
+            )
+            return
+
         if not payload.get("stream"):
             self._json(
                 200,
@@ -1229,6 +1244,26 @@ def assert_named_stream_error_event(proxy_port: int) -> None:
     assert error["message"] == "synthetic named upstream stream error", error
 
 
+def assert_nonstream_timeout_metric(proxy_port: int) -> None:
+    try:
+        post_json(
+            f"http://127.0.0.1:{proxy_port}/v1/messages",
+            {
+                "model": "claude-opus-4-8",
+                "stream": False,
+                "max_tokens": 64,
+                "messages": [{"role": "user", "content": "slow nonstream timeout"}],
+            },
+        )
+    except urllib.error.HTTPError as exc:
+        assert exc.code == 500, exc
+    else:
+        raise AssertionError("expected proxy timeout response")
+    metrics = get_json(f"http://127.0.0.1:{proxy_port}/healthz")["metrics"]
+    reasons = metrics["upstream_transport_errors_by_reason"]
+    assert reasons.get("timeout", 0) >= 1, metrics
+
+
 def assert_stream_read_exception_becomes_error_event() -> None:
     from proxy.anthropic_mtplx_proxy import iter_openai_stream_events
 
@@ -1571,6 +1606,23 @@ def main() -> int:
             display_proc.wait(timeout=5)
         except subprocess.TimeoutExpired:
             display_proc.kill()
+
+    timeout_proxy_port = free_port()
+    timeout_proc = start_proxy_process(
+        fake_port,
+        timeout_proxy_port,
+        "drop",
+        ["--timeout", "0.1"],
+    )
+    try:
+        wait_for_proxy(timeout_proxy_port, timeout_proc)
+        assert_nonstream_timeout_metric(timeout_proxy_port)
+    finally:
+        timeout_proc.terminate()
+        try:
+            timeout_proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            timeout_proc.kill()
 
     pass_proxy_port = free_port()
     pass_proc = start_proxy_process(

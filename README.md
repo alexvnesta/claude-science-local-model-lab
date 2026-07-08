@@ -121,8 +121,8 @@ PROXY_PROFILE=<the same profile you started> ./scripts/doctor.sh
 
 `/healthz` is intentionally safe to share in bug reports. It includes provider
 identity, stream mode, request-kind counters, provider latency summaries, retry
-counts, and tool-filter reason counts, but not prompts, tool arguments, tool
-results, account state, or artifacts.
+counts, upstream transport error counts, and tool-filter reason counts, but not
+prompts, tool arguments, tool results, account state, or artifacts.
 
 Expected first-run signals are listed in
 [`docs/verification-checklist.md`](docs/verification-checklist.md).
@@ -139,6 +139,12 @@ Launch the isolated Claude Science copy:
 ./scripts/launch-claude-science-local.sh
 ./scripts/local-url.sh
 ```
+
+If you use a non-default app data dir, config path, or port, export
+`CLAUDE_SCIENCE_LOCAL_DATA_DIR`, `CLAUDE_SCIENCE_LOCAL_CONFIG`, and
+`CLAUDE_SCIENCE_LOCAL_PORT` before running the launcher or API helpers. The
+launch, URL, submit, resolve, and stop helpers share the data/config defaults;
+the launcher plus submit/resolve helpers also share the port default.
 
 Open the printed URL and ask for a deterministic reply:
 
