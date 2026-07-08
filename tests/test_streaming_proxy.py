@@ -149,58 +149,6 @@ class FakeOpenAIHandler(BaseHTTPRequestHandler):
                 },
             )
             return
-        if not payload.get("stream") and "check harness tool choice" in prompt:
-            self._json(
-                200,
-                {
-                    "choices": [
-                        {
-                            "message": {
-                                "role": "assistant",
-                                "content": json.dumps(
-                                    {
-                                        "tool_choice": payload.get("tool_choice"),
-                                        "tool_names": [
-                                            item.get("function", {}).get("name")
-                                            for item in payload.get("tools") or []
-                                            if isinstance(item, dict)
-                                        ],
-                                    }
-                                ),
-                            },
-                            "finish_reason": "stop",
-                        }
-                    ],
-                    "usage": {"prompt_tokens": 4, "completion_tokens": 2},
-                },
-            )
-            return
-        if not payload.get("stream") and "check completed harness followup" in prompt:
-            self._json(
-                200,
-                {
-                    "choices": [
-                        {
-                            "message": {
-                                "role": "assistant",
-                                "content": json.dumps(
-                                    {
-                                        "tool_choice": payload.get("tool_choice"),
-                                        "tool_names": [
-                                            item.get("function", {}).get("name")
-                                            for item in payload.get("tools") or []
-                                            if isinstance(item, dict)
-                                        ],
-                                    }
-                                ),
-                            },
-                            "finish_reason": "stop",
-                        }
-                    ],
-                    "usage": {"prompt_tokens": 4, "completion_tokens": 2},
-                },
-            )
-            return
         if not payload.get("stream") and "check harness allowlist" in prompt:
             names = [
                 item.get("function", {}).get("name")
