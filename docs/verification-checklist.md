@@ -105,7 +105,7 @@ scripts/submit-local-request.py \
   "API path probe. Use search_skills once to search for request-shape routing. After the tool result, answer with marker API_KIND_SEARCH_OK."
 ```
 
-The helper obtains a short-lived login cookie through `claude-science url`,
+The helper obtains a short-lived login URL, submits its nonce confirmation form,
 posts to `/api/projects/{project_id}/request`, and prints the accepted
 `root_frame_id`.
 
