@@ -14,10 +14,10 @@ Traditional Claude Code proxies mostly translate one chat/tool loop from an
 Anthropic-shaped client to another provider. Claude Science is different: in
 observed runs it sends separate foreground-agent, hidden-tool, tool-agent, and
 reviewer/harness requests. This proxy preserves those request kinds, keeps
-reviewer tools such as `submit_output` separate from foreground tools such as
-`python` and `save_artifacts`, validates returned tool calls against the exact
-schemas Claude Science offered, and runs against a copied local app so the
-official Claude Science install stays untouched.
+structural reviewer tools such as `submit_output` explicit, validates returned
+tool calls against the forwarded client-tool schemas Claude Science offered,
+and runs against a copied local app so the official Claude Science install
+stays untouched.
 
 If you only want the architecture distinction, read
 [`docs/why-this-proxy.md`](docs/why-this-proxy.md).
@@ -34,15 +34,16 @@ If you only want the architecture distinction, read
 ## Why It Fits Claude Science
 
 Most public proxies target Claude Code-style chat. This one is narrower: it
-adapts the request shapes Claude Science actually emits.
+adapts the message and tool shapes Claude Science actually emits.
 
-- Brokers foreground, hidden-tool, tool-agent, and reviewer/harness requests.
-- Keeps reviewer tools such as `submit_output` separate from foreground tools
-  such as `python` and `save_artifacts`.
+- Records foreground, hidden-tool, tool-agent, and reviewer/harness request
+  shapes for redacted observability.
+- Keeps structural reviewer tools such as `submit_output` explicit without
+  adding reviewer-only rescue policy.
 - Translates Anthropic tool blocks to OpenAI-compatible tool messages and
   translates OpenAI tool calls back.
-- Validates returned tool calls against the exact schemas Claude Science
-  offered on that request.
+- Validates returned tool calls against the effective forwarded client-tool
+  schemas for that request.
 - Supports local/provider profiles, model-picker labels, redacted observability,
   and regression tests.
 
@@ -121,8 +122,8 @@ PROXY_PROFILE=<the same profile you started> ./scripts/doctor.sh
 
 `/healthz` is intentionally safe to share in bug reports. It includes provider
 identity, stream mode, request-kind counters, provider latency summaries, retry
-counts, and tool-filter reason counts, but not prompts, tool arguments, tool
-results, account state, or artifacts.
+counts, upstream transport error counts, and tool-filter reason counts, but not
+prompts, tool arguments, tool results, account state, or artifacts.
 
 Expected first-run signals are listed in
 [`docs/verification-checklist.md`](docs/verification-checklist.md).
@@ -151,38 +152,17 @@ If routing is local, `_local/proxy.log` will show `POST /v1/messages`.
 For MTPLX/Qwen, Ollama, and other provider-specific notes, see
 [`docs/providers.md`](docs/providers.md).
 
-## Current Proof
+## Current Proxy Evidence
 
-The gateway path works with an isolated Claude Science app copy and MTPLX/Qwen
-or OpenRouter backends. Verified paths include deterministic UI replies, short
-analysis prompts, focused tool loops, reviewer `submit_output`, `python` plus
-`save_artifacts` probes, OpenRouter/Gemma artifact runs, local Qwen artifact
-runs, reviewer inspection-tool routing, and local/provider model-picker labels.
+The gateway path is intended for an isolated Claude Science app copy and
+OpenAI-compatible backends such as MTPLX/Qwen or OpenRouter. Current
+deterministic proxy evidence covers provider smoke tests, redacted request-kind
+metrics, schema validation, explicit allowlists, and local/provider model-picker
+labels. Harness classification is tested, but a valid reviewer `submit_output`
+round trip still requires live app evidence. Treat model scientific performance
+as separate eval evidence, not as a proxy claim.
 
-For a public-safe evidence summary, see
-[`docs/evidence-bundle.md`](docs/evidence-bundle.md).
-
-Primary Qwen/MTPLX workflow GIF:
-
-![Claude Science running a TP53 TCGA-BRCA analysis through local MTPLX Qwen 27B](docs/assets/qwen-mtplx-tp53-workflow-demo.gif)
-
-The GIF shows the isolated app using the `MTPLX Qwen 27B Local` model label,
-conversation-scoped Python permission, a reviewer finding, corrective artifact
-creation, a final reviewer pass, and the generated TP53 TCGA-BRCA plot opened
-in split view.
-
-Public source notebook for the TP53 analysis:
-[`examples/tp53_brca_xena_analysis.ipynb`](examples/tp53_brca_xena_analysis.ipynb).
-The demo uses the public UCSC Xena TCGA-BRCA `HiSeqV2` expression matrix:
-[`TCGA.BRCA.sampleMap/HiSeqV2.gz`](https://tcga.xenahubs.net/download/TCGA.BRCA.sampleMap/HiSeqV2.gz).
-
-<img src="docs/assets/tp53-notebook-source-1.png" alt="Notebook source for loading TCGA-BRCA TP53 expression data" width="900">
-
-<img src="docs/assets/tp53-notebook-source-2.png" alt="Notebook source for plotting TP53 expression and writing artifacts" width="900">
-
-For detailed evidence, caveats, and capture notes, see
-[`docs/evidence-bundle.md`](docs/evidence-bundle.md),
-[`docs/demo-capture.md`](docs/demo-capture.md), and
+For detailed transport checks, caveats, and expected live-run signals, see
 [`docs/verification-checklist.md`](docs/verification-checklist.md).
 
 ## Repo Map
@@ -190,7 +170,7 @@ For detailed evidence, caveats, and capture notes, see
 - `proxy/`: dependency-light Anthropic Messages to OpenAI-compatible proxy.
   `observability.py` and `request_shape.py` are the first extracted modules;
   the conversion/server code is still being split out incrementally.
-- `profiles/`: provider and experiment profiles.
+- `profiles/`: provider/backend profiles.
 - `scripts/`: launch, status, smoke-test, and app verification helpers.
 - `tests/`: regression tests for streaming, tool filtering, and adapters.
 - `docs/`: start with the [`docs/README.md`](docs/README.md) index for setup,

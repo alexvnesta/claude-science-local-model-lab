@@ -24,9 +24,9 @@ repo cloneable, safe, and boring to audit.
 - `profiles/` contains shell env profiles for MTPLX/Qwen, generic local
   OpenAI-compatible backends, Ollama, and OpenRouter.
 - `tests/test_streaming_proxy.py` is the main regression suite for streaming,
-  tool-call filtering, schema validation, finite SSE close, and Qwen-style text
-  tool-call adapters.
-- `docs/architecture.md` explains the request-shape broker model.
+  tool-call filtering, schema validation, finite SSE close, allowlists, and
+  native/server-tool non-forwarding.
+- `docs/architecture.md` explains the request-shape classification model.
 - `docs/why-this-proxy.md` explains the Claude Science-specific value compared
   with Claude Code proxy prior art.
 

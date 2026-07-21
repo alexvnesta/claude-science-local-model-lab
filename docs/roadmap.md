@@ -2,22 +2,21 @@
 
 ## Current Assessment
 
-This proxy is in a good state for a public research lab. It proves that an
-isolated Claude Science app copy can route Anthropic-style model calls through
-a local proxy into an OpenAI-compatible backend, and it has real tests around
-the fragile parts: streaming conversion, direct-stream idle heartbeats, finite
-SSE close, request ID response headers, tool-call filtering, schema validation,
-Qwen-style reviewer tool-call text, reviewer-specific tool allowlists, Python
-smuggling guards, harness closeout forcing, and redacted health metrics.
+This proxy is in a useful state for a public research lab, but live app claims
+should still be backed by a fresh checklist run. The deterministic suite covers
+the fragile proxy parts: streaming conversion, direct-stream idle heartbeats,
+finite SSE close, request ID response headers, tool-call filtering, schema
+validation, structural harness request classification, native/server-tool
+non-forwarding, strict allowlist behavior, and redacted health metrics.
 
 It is not yet a polished production gateway. The main risks are long-running
-streaming behavior, the size of the single proxy file, model-specific adapters
-living near generic conversion code, and the fact that provider support is
-still profile-based rather than a first-class provider abstraction. The first
+streaming behavior, the size of the single proxy file, and the fact that
+provider support is still profile-based rather than a first-class provider
+abstraction. The first
 module split is underway (`request_shape.py` and `observability.py`), but the
 translation/server state machine is still mostly in one file. Local Qwen 27B
-can complete a real artifact workflow, but it is slow, splits work across many
-tool turns, and needs reviewer-loop guardrails.
+can complete short direct answers, but full Claude Science tool loops remain
+slower and less reliable than hosted Claude.
 
 ## Highest-Value Refinements
 
@@ -36,26 +35,27 @@ tool turns, and needs reviewer-loop guardrails.
    Started: `request_shape.py` owns request-kind classification, and
    `observability.py` owns redacted counters/logging/request IDs. A reasonable
    next split would be `server.py`, `config.py`, `anthropic.py`,
-   `openai_compat.py`, `streaming.py`, `tools.py`, `profiles.py`,
-   `schema_validation.py`, and `adapters/qwen.py`. Do this when tests can move
-   with the code, not as a cosmetic shuffle.
+   `openai_compat.py`, `streaming.py`, `tools.py`, `profiles.py`, and
+   `schema_validation.py`. Do this when tests can move with the code, not as a
+   cosmetic shuffle.
 
 3. Continue provider transport cleanup.
 
    OpenRouter and Ollama now have provider smoke scripts, `UPSTREAM_*` aliases,
-   a small `doctor` command, explicit `PROXY_PROVIDER_NAME`, profile defaults
-   for direct-stream heartbeats, and launcher pass-through for reviewer policy
-   flags. The next useful layer is a typed config file, more provider-specific
-   defaults, and optional live-provider smoke coverage for additional
-   OpenAI-compatible services.
+   a small `doctor` command, explicit `PROXY_PROVIDER_NAME`, and profile
+   defaults for direct-stream heartbeats. The next useful layer is a typed
+   config file, more provider-specific defaults, and optional live-provider
+   smoke coverage for additional OpenAI-compatible services.
 
-4. Keep request-shape routing separate from provider transport.
+4. Keep request-shape classification separate from provider transport.
 
    Claude Science request kinds (`plain`, `tools_hidden`, `tool_agent`,
-   `harness`) should remain the broker's core abstraction. Provider selection,
-   stream mode, and tool adapter choices should hang off that classification
-   rather than being mixed into app launch scripts. Keep foreground tool
-   allowlists, reviewer tool allowlists, and reviewer closeout policy separate.
+   `harness`) currently label redacted metrics only. Provider selection, stream
+   mode, and tool forwarding remain explicit profile/request settings. If future
+   evidence justifies request-specific routing, add and test that policy rather
+   than implying classification already changes behavior. Keep reviewer-specific
+   inspection experiments outside proxy core until a trace proves a general
+   transport requirement.
 
 5. Improve observability without leaking data.
 
@@ -81,32 +81,14 @@ tool turns, and needs reviewer-loop guardrails.
    smoke paths for vLLM, LM Studio, llama.cpp server, and other providers when
    their local endpoints or API keys are present.
 
-9. Add artifact-aware final-response guards.
+9. Measure reviewer budget needs before adding policy controls.
 
-   OpenRouter/Gemma produced valid saved artifacts but also hallucinated a
-   nonexistent `{{artifact:...}}` version reference in final prose. The reviewer
-   caught and resolved it, but a future direct-stream-safe guard should either
-   suppress unsupported artifact tags or rewrite them only after the referenced
-   version id is known from `save_artifacts` tool results. This is harder in
-   direct streaming than in buffered mode because text deltas are emitted before
-   the full final answer is available.
+    Live reviewer probes showed reviewer quality can improve when artifact
+    inspection tools are visible, but reviewers may then over-inspect and delay
+    `submit_output`. Do not add proxy-side reviewer forcing without fresh
+    evidence that it is a transport requirement rather than model behavior.
 
-10. Provide figure templates for weaker/local models.
-
-    Free and local models can execute Python but often make cramped figures.
-    Add reusable plotting helpers or prompt snippets for ranked bar charts,
-    pathway schematics, and BioRender-style layouts so model variability affects
-    content more than layout mechanics.
-
-11. Add reviewer budget and stop-policy controls.
-
-    The Qwen refined run showed reviewer quality improved when `repl` and
-    `read_file` were visible, but the reviewer then over-inspected and delayed
-    `submit_output`. The current closeout threshold is a profile-level guard.
-    A better version would be request-kind-aware and evidence-aware: inspect
-    TSV/Markdown/figure once, then force submit or summarize remaining risk.
-
-12. Add local process durability checks.
+10. Add local process durability checks.
 
     Long Qwen/reviewer loops can leave the isolated app or upstream model
     server unavailable. Add a post-run health monitor that reports whether

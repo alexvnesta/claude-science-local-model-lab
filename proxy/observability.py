@@ -25,6 +25,7 @@ class ProxyMetrics:
         self.messages_by_stream_mode: Counter[str] = Counter()
         self.upstream_errors_by_status: Counter[str] = Counter()
         self.upstream_retries_by_status: Counter[str] = Counter()
+        self.upstream_transport_errors_by_reason: Counter[str] = Counter()
         self.tool_filters_by_reason: Counter[str] = Counter()
         self.provider_latency_by_kind: dict[str, dict[str, float | int]] = {}
 
@@ -44,6 +45,10 @@ class ProxyMetrics:
     def record_upstream_error(self, *, status: int) -> None:
         with self._lock:
             self.upstream_errors_by_status[str(status)] += 1
+
+    def record_upstream_transport_error(self, *, reason: str) -> None:
+        with self._lock:
+            self.upstream_transport_errors_by_reason[reason] += 1
 
     def record_tool_filter(self, *, reason: str) -> None:
         with self._lock:
@@ -86,6 +91,9 @@ class ProxyMetrics:
                 "messages_by_stream_mode": dict(sorted(self.messages_by_stream_mode.items())),
                 "upstream_errors_by_status": dict(sorted(self.upstream_errors_by_status.items())),
                 "upstream_retries_by_status": dict(sorted(self.upstream_retries_by_status.items())),
+                "upstream_transport_errors_by_reason": dict(
+                    sorted(self.upstream_transport_errors_by_reason.items())
+                ),
                 "tool_filters_by_reason": dict(sorted(self.tool_filters_by_reason.items())),
                 "provider_latency_by_kind": latency,
             }

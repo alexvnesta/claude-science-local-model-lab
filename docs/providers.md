@@ -1,8 +1,8 @@
 # Provider Profiles
 
 The proxy forwards requests to an OpenAI-compatible
-`/v1/chat/completions` endpoint. MTPLX/Qwen was the first working proof, but it
-is not required.
+`/v1/chat/completions` endpoint. MTPLX/Qwen is one supported local profile, but
+it is not required.
 
 The preferred profile env names are:
 
@@ -24,16 +24,16 @@ names are still supported for compatibility.
 
 ## MTPLX / Local Qwen
 
-The live local proof used MTPLX's OpenAI-compatible endpoint:
+The maintained MTPLX profile points at MTPLX's OpenAI-compatible endpoint:
 
 ```text
 UPSTREAM_OPENAI_BASE_URL=http://127.0.0.1:8030/v1
 UPSTREAM_OPENAI_MODEL=mtplx-qwen36-27b-optimized-quality
 ```
 
-MTPLX/Qwen is a companion local stack for the exact demo path; it is not
-distributed in this repository. For another local Qwen stack to follow the same
-path, expose an OpenAI-compatible server with:
+MTPLX/Qwen is a companion local stack; it is not distributed in this
+repository. For another local Qwen stack to follow the same proxy path, expose
+an OpenAI-compatible server with:
 
 ```text
 GET  /v1/models
@@ -43,7 +43,7 @@ POST /v1/chat/completions
 Then set `UPSTREAM_OPENAI_BASE_URL` and `UPSTREAM_OPENAI_MODEL` in a local
 profile. The model slug must match whatever the upstream server advertises.
 
-Get MTPLX and the demo checkpoint:
+Get MTPLX and an example checkpoint:
 
 - [MTPLX GitHub repo](https://github.com/youssofal/MTPLX)
 - [MTPLX app and release downloads](https://mtplx.com/)
@@ -55,41 +55,31 @@ The public checkpoint ID and the model alias exposed by the local server do not
 have to be identical; `UPSTREAM_OPENAI_MODEL` just needs to match the running
 server.
 
-Start with prose or narrow tool profiles before broadening tool exposure:
+Use `profiles/mtplx-qwen.env.example` as the maintained MTPLX profile.
+Claude Science profiles explicitly advertise `claude-opus-4-8` as an alias for
+the selected upstream model. The proxy core itself defaults to advertising only
+the upstream model ID.
 
-```bash
-PROXY_PROFILE=profiles/mtplx-qwen-analysis.env.example ./scripts/start-proxy-detached.sh
-PROXY_PROFILE=profiles/mtplx-qwen-tool-probe.env.example ./scripts/start-proxy-detached.sh
-PROXY_PROFILE=profiles/mtplx-qwen-execution-probe.env.example ./scripts/start-proxy-detached.sh
-```
-
-Observed Qwen behavior:
+Observed in local Qwen transport probes:
 
 - It can produce valid `python` and `save_artifacts` calls when the foreground
   tool surface is narrow and explicitly requested.
-- It may split a requested artifact workflow across several Python calls even
-  when asked to do it in one call.
-- It may try to call Claude Science tools inside Python source, for example
-  `skill({"skill":"figure-style"})`; the execution profile now filters that
-  shape before local execution.
-- Reviewer frames should not inherit the foreground allowlist. The execution
-  profile uses `PROXY_HARNESS_TOOL_ALLOWLIST` so reviewers can inspect artifacts
-  with `repl` and `read_file`.
-- Reviewer frames may over-inspect instead of calling `submit_output`. The
-  execution profile enables `PROXY_HARNESS_FORCE_SUBMIT_AFTER_TOOL_RESULTS=6`
-  so a long reviewer inspection loop is closed by forwarding only
-  `submit_output`.
-- Local model loops are slow. The refined Qwen artifact run took multiple
-  model turns for TSV, figure, Markdown, artifact save, final answer, and
-  reviewer inspection. Treat this as a capability proof, not yet an ergonomic
-  production default.
+- It may split tool work across several calls or emit malformed tool arguments.
+  Treat those as model/tool-use failures unless the proxy transport malformed
+  the offered schema or returned tool result.
+- `PROXY_HARNESS_TOOLS` classifies structural reviewer tools such as
+  `submit_output`; it does not expand `PROXY_TOOL_ALLOWLIST`. If a focused
+  profile uses an allowlist, add `submit_output` there explicitly when reviewer
+  submission should be forwarded.
+- `PROXY_CLAUDE_SCIENCE_COMPAT` is explicit and defaults to `0` in the example
+  profiles. Set it to `1` only for app-side tool-execution probes that need
+  Claude Science-compatible `toolu_...` IDs and `caller` metadata.
+- Local model loops are slow. Keep live app probes short and verify persisted
+  app database state before treating a UI answer as proof of execution.
 - MTPLX/Qwen profiles still default to `PROXY_STREAM_MODE=buffered` because
   that is the known-good app path for short tool loops. Direct mode now has
   proxy-level heartbeat coverage, but it still needs fresh Claude Science
   app-side proof before becoming the default for Qwen execution workflows.
-- The analysis profile enables `PROXY_STRIP_THINKING_TEXT=1` so leading
-  Qwen-style `<think>...</think>` blocks do not appear in clean no-tool Claude
-  Science UI demos. Disable it when you need to debug raw model output.
 
 ## Ollama
 
@@ -171,8 +161,6 @@ Official references:
 
 - [OpenRouter quickstart](https://openrouter.ai/docs/quickstart)
 - [OpenRouter model catalog](https://openrouter.ai/models)
-
-See also [`demo-capture.md`](demo-capture.md).
 
 ## Other OpenAI-Compatible Backends
 
