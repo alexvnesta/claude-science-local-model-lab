@@ -9,8 +9,8 @@ when you need a more specific reference.
   this differs from a traditional Claude Code proxy.
 - [`providers.md`](providers.md): OpenRouter, MTPLX/Qwen, Ollama, and generic
   OpenAI-compatible backend setup notes.
-- [`architecture.md`](architecture.md): request-shape broker model, tool
-  routing, schema validation, streaming, and observability design.
+- [`architecture.md`](architecture.md): request-shape classification, tool
+  forwarding, schema validation, streaming, and observability design.
 - [`verification-checklist.md`](verification-checklist.md): checklist for
   proving a live run, smoke testing, permissions, reviewers, and artifacts.
 

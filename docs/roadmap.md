@@ -47,12 +47,13 @@ slower and less reliable than hosted Claude.
    config file, more provider-specific defaults, and optional live-provider
    smoke coverage for additional OpenAI-compatible services.
 
-4. Keep request-shape routing separate from provider transport.
+4. Keep request-shape classification separate from provider transport.
 
    Claude Science request kinds (`plain`, `tools_hidden`, `tool_agent`,
-   `harness`) should remain the broker's core abstraction. Provider selection,
-   stream mode, and tool adapter choices should hang off that classification
-   rather than being mixed into app launch scripts. Keep reviewer-specific
+   `harness`) currently label redacted metrics only. Provider selection, stream
+   mode, and tool forwarding remain explicit profile/request settings. If future
+   evidence justifies request-specific routing, add and test that policy rather
+   than implying classification already changes behavior. Keep reviewer-specific
    inspection experiments outside proxy core until a trace proves a general
    transport requirement.
 

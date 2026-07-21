@@ -16,7 +16,6 @@ import argparse
 import glob
 import http.cookiejar
 import json
-import os
 import sqlite3
 import subprocess
 import sys
@@ -34,24 +33,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--frame-id", required=True, help="Frame with a pending input request.")
     parser.add_argument("--request-id", help="Pending request id. Defaults to first pending request in DB.")
     parser.add_argument("--tool-id", help="Tool use id. Defaults to first pending request in DB.")
-    parser.add_argument(
-        "--app-port",
-        default=os.environ.get("CLAUDE_SCIENCE_LOCAL_PORT", "18765"),
-        help="Local Claude Science port.",
-    )
+    parser.add_argument("--app-port", default="18765", help="Local Claude Science port.")
     parser.add_argument(
         "--app-cli",
         default=str(ROOT / "_local/Claude Science.app/Contents/Resources/bin/claude-science"),
         help="Path to the copied claude-science CLI.",
     )
-    parser.add_argument(
-        "--data-dir",
-        default=os.environ.get("CLAUDE_SCIENCE_LOCAL_DATA_DIR", str(ROOT / "_local/data")),
-    )
-    parser.add_argument(
-        "--config",
-        default=os.environ.get("CLAUDE_SCIENCE_LOCAL_CONFIG", str(ROOT / "_local/config.toml")),
-    )
+    parser.add_argument("--data-dir", default=str(ROOT / "_local/data"))
+    parser.add_argument("--config", default=str(ROOT / "_local/config.toml"))
     parser.add_argument("--db", help="Path to operon-cli.db. Defaults to first DB under data-dir/orgs.")
     parser.add_argument("--action", default="allow", choices=("allow", "deny", "cancel"))
     parser.add_argument(

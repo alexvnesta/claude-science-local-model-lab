@@ -34,9 +34,10 @@ If you only want the architecture distinction, read
 ## Why It Fits Claude Science
 
 Most public proxies target Claude Code-style chat. This one is narrower: it
-adapts the request shapes Claude Science actually emits.
+adapts the message and tool shapes Claude Science actually emits.
 
-- Brokers foreground, hidden-tool, tool-agent, and reviewer/harness requests.
+- Records foreground, hidden-tool, tool-agent, and reviewer/harness request
+  shapes for redacted observability.
 - Keeps structural reviewer tools such as `submit_output` explicit without
   adding reviewer-only rescue policy.
 - Translates Anthropic tool blocks to OpenAI-compatible tool messages and
@@ -140,12 +141,6 @@ Launch the isolated Claude Science copy:
 ./scripts/local-url.sh
 ```
 
-If you use a non-default app data dir, config path, or port, export
-`CLAUDE_SCIENCE_LOCAL_DATA_DIR`, `CLAUDE_SCIENCE_LOCAL_CONFIG`, and
-`CLAUDE_SCIENCE_LOCAL_PORT` before running the launcher or API helpers. The
-launch, URL, submit, resolve, and stop helpers share the data/config defaults;
-the launcher plus submit/resolve helpers also share the port default.
-
 Open the printed URL and ask for a deterministic reply:
 
 ```text
@@ -161,10 +156,11 @@ For MTPLX/Qwen, Ollama, and other provider-specific notes, see
 
 The gateway path is intended for an isolated Claude Science app copy and
 OpenAI-compatible backends such as MTPLX/Qwen or OpenRouter. Current
-deterministic proxy evidence covers provider smoke tests, request-kind routing,
-schema validation, explicit allowlists, reviewer `submit_output` handling, and
-local/provider model-picker labels. Treat model scientific performance as
-separate eval evidence, not as a proxy claim.
+deterministic proxy evidence covers provider smoke tests, redacted request-kind
+metrics, schema validation, explicit allowlists, and local/provider model-picker
+labels. Harness classification is tested, but a valid reviewer `submit_output`
+round trip still requires live app evidence. Treat model scientific performance
+as separate eval evidence, not as a proxy claim.
 
 For detailed transport checks, caveats, and expected live-run signals, see
 [`docs/verification-checklist.md`](docs/verification-checklist.md).

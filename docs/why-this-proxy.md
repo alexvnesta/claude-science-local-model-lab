@@ -41,16 +41,17 @@ flowchart LR
 ```
 
 The important part is the middle box. The proxy is not just swapping URLs. It
-classifies the request shape, exposes the right tool surface, validates returned
-tool calls, and converts responses back into the Anthropic Messages shape that
-Claude Science expects.
+records the request shape for observability, applies the profile's configured
+tool policy, validates returned tool calls, and converts responses back into the
+Anthropic Messages shape that Claude Science expects. Classification itself does
+not select a different tool surface.
 
 ## What The Proxy Adds
 
 | Area | What it does |
 | --- | --- |
 | App isolation | Runs a copied Claude Science app against `_local/` data so the official app and account state stay untouched. |
-| Request-shape routing | Separates `plain`, `tools_hidden`, `tool_agent`, and `harness` traffic instead of treating every request like one chat loop. |
+| Request-shape classification | Labels `plain`, `tools_hidden`, `tool_agent`, and `harness` traffic for redacted logs and metrics. |
 | Reviewer safety | Keeps structural reviewer tools such as `submit_output` explicit without adding reviewer-only rescue policy. |
 | Tool correctness | Validates returned tool calls against the effective forwarded client-tool schemas before emitting executable `tool_use`. |
 | Local-model adaptation | Keeps model-specific behavior in provider profiles and validates executable tool calls at the schema boundary. |
@@ -72,9 +73,9 @@ product workflow. A failed reviewer `submit_output`, a hidden-tool call treated
 as a foreground agent, or a local model hallucinating a Python/artifact call can
 break the scientific session even if ordinary chat still works.
 
-This repo therefore treats Claude Science request kind as the core abstraction.
-Provider selection, stream mode, tool adapters, and profile settings hang
-off that classification.
+This repo records Claude Science request kind as an observability abstraction.
+Provider selection, stream mode, tool forwarding, and validation remain explicit
+profile or request settings; classification does not silently change them.
 
 ## Where Other Projects Are Better
 
@@ -99,10 +100,10 @@ exist is Claude Science workflow compatibility.
 
 ## Design Direction
 
-The right future direction is to keep the Claude Science broker behavior sharp
-while gradually modularizing:
+The right future direction is to keep the Claude Science compatibility
+behavior sharp while gradually modularizing:
 
-- request-shape routing;
+- request-shape classification;
 - provider transport;
 - streaming;
 - tool/schema validation;
