@@ -12,12 +12,13 @@ from __future__ import annotations
 import argparse
 import http.cookiejar
 import json
-import subprocess
 import sys
 import urllib.error
 import urllib.request
 import uuid
 from pathlib import Path
+
+from local_app_auth import login
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -42,31 +43,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--plan-mode", action="store_true")
     parser.add_argument("--ultra-mode", action="store_true")
     return parser.parse_args()
-
-
-def login(
-    opener: urllib.request.OpenerDirector,
-    jar: http.cookiejar.MozillaCookieJar,
-    args: argparse.Namespace,
-) -> str:
-    url_output = subprocess.check_output(
-        [
-            args.app_cli,
-            "url",
-            "--data-dir",
-            args.data_dir,
-            "--config",
-            args.config,
-        ],
-        text=True,
-        stderr=subprocess.DEVNULL,
-    )
-    login_url = url_output.splitlines()[0].strip()
-    opener.open(login_url, timeout=10).read()
-    for cookie in jar:
-        if cookie.name == "operon_csrf":
-            return str(cookie.value)
-    raise RuntimeError("Claude Science login did not set operon_csrf")
 
 
 def main() -> int:

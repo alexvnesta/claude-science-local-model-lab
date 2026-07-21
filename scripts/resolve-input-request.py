@@ -17,12 +17,13 @@ import glob
 import http.cookiejar
 import json
 import sqlite3
-import subprocess
 import sys
 import urllib.error
 import urllib.request
 from pathlib import Path
 from typing import Any
+
+from local_app_auth import login
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -56,31 +57,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--target-agent")
     parser.add_argument("--dry-run", action="store_true")
     return parser.parse_args()
-
-
-def login(
-    opener: urllib.request.OpenerDirector,
-    jar: http.cookiejar.MozillaCookieJar,
-    args: argparse.Namespace,
-) -> str:
-    url_output = subprocess.check_output(
-        [
-            args.app_cli,
-            "url",
-            "--data-dir",
-            args.data_dir,
-            "--config",
-            args.config,
-        ],
-        text=True,
-        stderr=subprocess.DEVNULL,
-    )
-    login_url = url_output.splitlines()[0].strip()
-    opener.open(login_url, timeout=10).read()
-    for cookie in jar:
-        if cookie.name == "operon_csrf":
-            return str(cookie.value)
-    raise RuntimeError("Claude Science login did not set operon_csrf")
 
 
 def default_db(data_dir: str) -> Path:
